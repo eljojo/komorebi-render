@@ -2,10 +2,12 @@
 // stops the start before the worker has touched a job; the worker's own start-up (requeue what was running) follows.
 import { createApi, listen } from './api.js';
 import { createWorker } from './worker.js';
+import { createOutputRootCheck } from './netmount.js';
 
 export async function serve({ store, config, pin, prepare, log = console.log, workerOptions = {} }) {
-  const worker = createWorker({ store, config, log, prepare, ...workerOptions });
-  const server = await listen(createApi({ store, config, pin, log }), { host: config.host, port: config.port });
+  const checkOut = workerOptions.checkOut ?? createOutputRootCheck(config.out, { allowLocal: config.allowLocal });
+  const worker = createWorker({ store, config, log, prepare, ...workerOptions, checkOut });
+  const server = await listen(createApi({ store, config, pin, log, checkOut }), { host: config.host, port: config.port });
   log(`komorebi-render listening on ${config.host}:${server.address().port}`);
   let closing;
   const close = () => {

@@ -166,3 +166,58 @@ test('run() takes queued jobs one at a time until stopped', async () => {
   await worker.stop();
   await loop;
 });
+
+test('an async NAS refusal waits for the check then blocks without preparing or rendering', async () => {
+  let release;
+  const stalled = new Promise((resolve) => { release = resolve; });
+  const { store, worker, prepared } = rig({ checkOut: () => stalled });
+  const job = submit(store, {});
+  let finished = false;
+  const run = worker.runOnce().then((result) => { finished = true; return result; });
+  await new Promise((resolve) => setImmediate(resolve));
+  const premature = finished;
+  release({ ok: false, reason: 'NAS check timed out' });
+  const result = await run;
+  assert.equal(premature, false);
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(store.get(job.id).blocked, 'output root: NAS check timed out');
+  assert.equal(prepared.n, 0);
+});
+
+test('stop during an async NAS check leaves the job queued without preparing when the check returns', async () => {
+  let release;
+  const stalled = new Promise((resolve) => { release = resolve; });
+  const { store, worker, prepared } = rig({ checkOut: () => stalled });
+  const job = submit(store, {});
+  const run = worker.runOnce();
+  await worker.stop();
+  release({ ok: true });
+  await run;
+  assert.equal(prepared.n, 0);
+  assert.equal(store.get(job.id).state, 'queued');
+});
+
+test('the worker loop stops without a new poll sleep after an awaited NAS check', async () => {
+  let release, entered;
+  const stalled = new Promise((resolve) => { release = resolve; });
+  const checking = new Promise((resolve) => { entered = resolve; });
+  const { store, worker } = rig({ checkOut: () => { entered(); return stalled; } });
+  submit(store, {});
+  const loop = worker.run();
+  let timer;
+  try {
+    await checking;
+    await worker.stop();
+    release({ ok: true });
+    const stopped = await Promise.race([
+      loop.then(() => true),
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), 5); }),
+    ]);
+    assert.equal(stopped, true);
+  } finally {
+    clearTimeout(timer);
+    release({ ok: false });
+    await worker.stop();
+    await loop;
+  }
+});

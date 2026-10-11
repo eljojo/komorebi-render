@@ -4,7 +4,7 @@ import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { LOOK_FILE, exporterArgs, exporterCommand, progress, readResult, tailLines } from './exporter.js';
-import { checkOutputRoot } from './netmount.js';
+import { createOutputRootCheck } from './netmount.js';
 import { childEnv } from './engine.js';
 import { scrubSecrets } from './spec.js';
 
@@ -19,7 +19,7 @@ export function createWorker({
   node = process.execPath, caffeinate = process.platform === 'darwin' && existsSync('/usr/bin/caffeinate'),
   pollMs = 5000, progressMs = 3000, graceMs = 30000, extraEnv = {},
 }) {
-  const check = checkOut ?? (() => checkOutputRoot(config.out, { allowLocal: config.allowLocal }));
+  const check = checkOut ?? createOutputRootCheck(config.out, { allowLocal: config.allowLocal });
   const sleepers = new Set();
   const sleep = (ms) => new Promise((resolve) => { const t = setTimeout(done, ms); function done() { clearTimeout(t); sleepers.delete(done); resolve(); } sleepers.add(done); });
   let stopping = false, preparing = null, current = null;
@@ -47,7 +47,8 @@ export function createWorker({
     if (stopping) return null;
     const job = store.nextQueued();
     if (!job) return null;
-    const ok = check();
+    const ok = await check();
+    if (stopping) return null;
     if (!ok.ok) return block(job, `output root: ${ok.reason}`);
     let engine;
     try { engine = await ensurePrepared(); } catch (e) { return block(job, `engine not ready: ${scrub(e.message, job.spec)}`); }
@@ -117,7 +118,7 @@ export function createWorker({
     await recover();
     while (!stopping) {
       const r = await runOnce();
-      if (!r || r.outcome === 'blocked') await sleep(pollMs);
+      if (!stopping && (!r || r.outcome === 'blocked')) await sleep(pollMs);
     }
   }
 

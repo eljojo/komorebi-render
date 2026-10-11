@@ -313,3 +313,28 @@ test('over real HTTP: a round trip on port 0, an oversized body refused, a handl
     assert.deepEqual(await broken.json(), { error: 'internal error' });
   } finally { server.closeAllConnections(); await new Promise((r) => server.close(r)); }
 });
+
+test('while health awaits a stalled NAS check, queued-job routes remain responsive over HTTP', async () => {
+  const { store, config, submit } = rig();
+  const job = submit();
+  let release;
+  const stalled = new Promise((resolve) => { release = resolve; });
+  const api = createApi({ store, config, pin: { commit: SHA }, checkOut: () => stalled });
+  const server = await listen(api, { host: '127.0.0.1', port: 0 });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  let healthDone = false;
+  const health = fetch(`${base}/health`).then(async (response) => { healthDone = true; return response.json(); });
+  try {
+    assert.equal((await (await fetch(`${base}/jobs/${job.id}`)).json()).state, 'queued');
+    assert.equal((await fetch(`${base}/jobs`)).status, 200);
+    assert.equal(healthDone, false);
+    assert.equal((await fetch(`${base}/jobs/${job.id}`, { method: 'DELETE' })).status, 200);
+    release({ ok: true });
+    assert.equal((await health).nas, 'ok');
+  } finally {
+    release({ ok: false });
+    await health;
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

@@ -1,5 +1,5 @@
 // The HTTP API over the job store: JSON over node:http, no framework, no auth (the LAN; auth comes before any exposure beyond it).
-// `createApi` returns `handle({ method, url, body })` -> { status, headers, body }, which is all the logic and what the tests call;
+// `createApi` returns async `handle({ method, url, body })` -> { status, headers, body }, which is all the logic and what the tests call;
 // `listener` is the thin node:http shell around it (reads the body, writes the answer). The same database as the worker's is the
 // only channel: a submit writes a row, the worker takes it; a cancel sets a flag, the worker stops the exporter.
 import { createServer } from 'node:http';
@@ -9,7 +9,7 @@ import { StoreError } from './store.js';
 import { SpecError, scrubSecrets, validateSpec } from './spec.js';
 import { jobView } from './view.js';
 import { tailLines } from './exporter.js';
-import { checkOutputRoot } from './netmount.js';
+import { createOutputRootCheck } from './netmount.js';
 
 const MAX_BODY = 1024 * 1024;   // a look's params are tens of KB
 const LLMS = new URL('../llms.txt', import.meta.url);
@@ -84,9 +84,10 @@ function cancel({ store }, { id }) {
   return json(how === 'cancelled' ? 200 : 202, { id, cancel: how, state: store.get(id).state });
 }
 
-function health({ store, config, pin, checkOut }) {
+async function health({ store, config, pin, checkOut }) {
+  const nas = await checkOut();
   const worker = store.list({ state: 'running' }).length ? 'busy' : store.list({ state: 'queued' }).some((j) => j.blocked) ? 'blocked' : 'idle';
-  return json(200, { ok: true, pin: pin.commit, worker, nas: checkOut().ok ? 'ok' : 'missing' });
+  return json(200, { ok: true, pin: pin.commit, worker, nas: nas.ok ? 'ok' : 'missing' });
 }
 
 function llms({ llmsFile }) {
@@ -117,16 +118,16 @@ function match(pattern, path) {
 }
 
 export function createApi({ store, config, pin, checkOut, now = Date.now, log = console.error, llmsFile = LLMS }) {
-  const ctx = { store, config, pin, now, llmsFile, checkOut: checkOut ?? (() => checkOutputRoot(config.out, { allowLocal: config.allowLocal })) };
+  const ctx = { store, config, pin, now, llmsFile, checkOut: checkOut ?? createOutputRootCheck(config.out, { allowLocal: config.allowLocal }) };
 
-  function handle({ method, url, body }) {
+  async function handle({ method, url, body }) {
     try {
       const path = new URL(url, 'http://localhost').pathname;
       const hits = ROUTES.map((r) => ({ r, params: match(r.path, path) })).filter((h) => h.params);
       if (!hits.length) return json(404, { error: `no such route: ${path}` });
       const hit = hits.find((h) => h.r.method === method);
       if (!hit) return json(405, { error: `${method} is not allowed on ${path}` }, { allow: hits.map((h) => h.r.method).sort().join(', ') });
-      return hit.r.run(ctx, hit.params, { body });
+      return await hit.r.run(ctx, hit.params, { body });
     } catch (e) {
       log(`komorebi-render: ${e.message}`);
       return json(500, { error: 'internal error' });
@@ -138,8 +139,8 @@ export function createApi({ store, config, pin, checkOut, now = Date.now, log = 
     let size = 0, tooBig = false;
     req.on('data', (c) => { size += c.length; if (size > MAX_BODY) tooBig = true; else chunks.push(c); });
     req.on('error', () => res.destroy());
-    req.on('end', () => {
-      const r = tooBig ? json(413, { error: `the body is over ${MAX_BODY} bytes` }) : handle({ method: req.method, url: req.url, body: chunks.length ? Buffer.concat(chunks).toString('utf8') : undefined });
+    req.on('end', async () => {
+      const r = tooBig ? json(413, { error: `the body is over ${MAX_BODY} bytes` }) : await handle({ method: req.method, url: req.url, body: chunks.length ? Buffer.concat(chunks).toString('utf8') : undefined });
       res.writeHead(r.status, { ...r.headers, 'content-length': Buffer.byteLength(r.body) });
       res.end(r.body);
     });

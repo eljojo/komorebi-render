@@ -1,7 +1,9 @@
 // Refuses an output root that is not a mounted network share: a render writes gigabytes, and a missing mount would
 // silently fill the Mac's own disk with an ordinary folder at the same path.
-import { accessSync, constants, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { constants } from 'node:fs';
+import * as fileSystem from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join, sep } from 'node:path';
 
 const NETWORK = /^(smbfs|afpfs|nfs\d*)$/;
@@ -25,27 +27,47 @@ export function mountFor(path, mounts) {
   return best;
 }
 
-const readMountDefault = () => execFileSync('mount', { encoding: 'utf8' });
+const run = promisify(execFile);
+const readMountDefault = async () => (await run('mount', { encoding: 'utf8' })).stdout;
 
-export function checkOutputRoot(out, { readMount = readMountDefault, allowLocal = false } = {}) {
+export async function checkOutputRoot(out, { readMount = readMountDefault, allowLocal = false, fs = fileSystem } = {}) {
   if (!out) return { ok: false, reason: 'KOMOREBI_RENDER_OUT is not set' };
   let real;
   try {
-    if (!statSync(out).isDirectory()) return { ok: false, reason: `${out} is not a directory` };
-    real = realpathSync(out);
+    if (!(await fs.stat(out)).isDirectory()) return { ok: false, reason: `${out} is not a directory` };
+    real = await fs.realpath(out);
   } catch { return { ok: false, reason: `${out} does not exist` }; }
   try {
-    accessSync(out, constants.W_OK);
+    await fs.access(out, constants.W_OK);
     // SMB reports W_OK generously; only a write proves it.
     const probe = join(out, `.komorebi-render-probe-${process.pid}`);
-    writeFileSync(probe, '');
-    unlinkSync(probe);
+    await fs.writeFile(probe, '');
+    await fs.unlink(probe);
   } catch (e) { return { ok: false, reason: `${out} is not writable (${e.code ?? e.message})` }; }
   if (allowLocal) return { ok: true, fstype: 'local (KOMOREBI_RENDER_ALLOW_LOCAL)' };
   let mounts;
-  try { mounts = parseMounts(readMount()); } catch (e) { return { ok: false, reason: `cannot read the mount table: ${e.message}` }; }
+  try { mounts = parseMounts(await readMount()); } catch (e) { return { ok: false, reason: `cannot read the mount table: ${e.message}` }; }
   const m = mountFor(real, mounts);
   if (!m) return { ok: false, reason: `${real} is on no mount the mount table lists` };
   if (!NETWORK.test(m.fstype)) return { ok: false, reason: `${real} is not a network mount (it is on ${m.point}, ${m.fstype})` };
   return { ok: true, fstype: m.fstype };
+}
+
+// A stuck SMB syscall cannot be cancelled. Share its bounded answer until the actual probe settles, rather than
+// starting another probe on each worker/API poll and eventually consuming the filesystem thread pool.
+export function createOutputRootCheck(out, { timeoutMs = 5000, ...options } = {}) {
+  let pending = null;
+  return () => {
+    if (pending) return pending;
+    let finish;
+    const answer = new Promise((resolve) => { finish = resolve; });
+    pending = answer;
+    const timer = setTimeout(() => finish({ ok: false, reason: `${out} check timed out` }), timeoutMs);
+    checkOutputRoot(out, options).then((result) => {
+      clearTimeout(timer);
+      finish(result);
+      pending = null;
+    });
+    return answer;
+  };
 }
