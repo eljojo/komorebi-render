@@ -1,0 +1,9 @@
+node_modules/
+result
+result-*
+# local state when KOMOREBI_RENDER_STATE points into the checkout
+/state/
+/out/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

@@ -1,0 +1,12 @@
+{
+  "name": "komorebi-render",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A render server for komorebi: jobs in, 1080p / 4K video out on the NAS.",
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "pin": "node scripts/pin.mjs"
+  }
+}
