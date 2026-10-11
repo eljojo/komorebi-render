@@ -24,7 +24,7 @@ function summary(job, now, token) {
   const v = jobView(job, now);
   return {
     id: job.id, state: job.state, name: nameOf(job.spec),
-    size: job.spec.size, seconds: job.spec.seconds, fps: job.spec.fps, quality: job.quality,
+    size: job.spec.size, seconds: job.spec.seconds, fps: job.spec.fps, quality: job.quality, pipeline: v.pipeline,
     progress: v.progress, eta_s: v.eta?.seconds ?? null, eta_basis: v.eta?.basis ?? null,
     blocked: job.blocked === null ? null : scrubSecrets(job.blocked, job.spec, token), created_at: job.created_at, started_at: job.started_at, finished_at: job.finished_at,
   };

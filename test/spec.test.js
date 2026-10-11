@@ -111,8 +111,33 @@ test('every refusal names the field it is about', () => {
 });
 
 test('the keys the validator knows are exported, for the docs that must list them', () => {
-  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality']);
+  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline']);
   assert.deepEqual(DELIVERY_KEYS, ['vt_bitrate', 'vt_quality']);
+});
+
+test('pipeline is optional for older specs and accepts the four export mechanisms independently of quality', () => {
+  const base = { preset: '3', size: '1080p', seconds: 5 };
+  assert.equal('pipeline' in ok(base), false);
+  for (const pipeline of ['master', 'gpu', 'gpu-main10', 'browser']) {
+    for (const quality of ['authored', 'max', { ss: 1 }, { ss: 2 }]) {
+      assert.equal(ok({ ...base, pipeline, quality }).pipeline, pipeline);
+    }
+  }
+  for (const pipeline of ['fast', '', null, 1, {}]) bad({ ...base, pipeline }, /pipeline.*master.*gpu.*gpu-main10.*browser/);
+});
+
+test('direct pipelines refuse retained masters; browser refuses delivery controls', () => {
+  const base = { preset: '3', size: '1080p', seconds: 5 };
+  for (const pipeline of ['gpu', 'gpu-main10', 'browser']) {
+    assert.throws(() => ok({ ...base, pipeline, master: true }), e => e instanceof SpecError && e.fields[0] === 'master');
+    assert.equal(ok({ ...base, pipeline, master: false }).master, false);
+  }
+  assert.equal(ok({ ...base, pipeline: 'master', master: true }).master, true);
+  for (const pipeline of ['gpu', 'gpu-main10']) assert.deepEqual(ok({ ...base, pipeline, delivery: { vt_quality: 100 } }).delivery, { vt_quality: 100 });
+  assert.equal('delivery' in ok({ ...base, pipeline: 'browser', delivery: {} }), false);
+  for (const delivery of [{ vt_quality: 100 }, { vt_bitrate: '80M' }]) {
+    assert.throws(() => ok({ ...base, pipeline: 'browser', delivery }), e => e instanceof SpecError && e.fields[0] === 'delivery');
+  }
 });
 
 test('scrubSecrets hides the arboretum token and the preset share token wherever they appear', () => {

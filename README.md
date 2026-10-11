@@ -57,7 +57,8 @@ komorebi-render serve                  run the HTTP API and one worker together
 | `fps` | `30` or `60` (default 60). |
 | `master` | `false` (default): the lossless segments are deleted once the delivery is verified. `true` keeps them. |
 | `quality` | `"authored"` (default: the look as saved), `"max"`, or an object (below). |
-| `delivery` | optional, one of `{ "vt_bitrate": "60M" }` (k, K or M) or `{ "vt_quality": 0..100 }`. |
+| `pipeline` | `"master"` (default), `"gpu"`, `"gpu-main10"` or `"browser"`; capture and encoding, independent of quality. |
+| `delivery` | optional, one of `{ "vt_bitrate": "60M" }` (k, K or M) or `{ "vt_quality": 0..100 }`; browser requires omitted or empty delivery. |
 
 **Quality.** `"max"` is `tex_resolution` 4096, `bake_resolution` 0 (follows tex, so a 4096 bake) and `sample_count` 48; at 1080p
 or smaller it also renders at 2x and downscales (`--ss 2`). An object takes any of `tex_resolution` (1024, 2048, 4096),
@@ -67,6 +68,48 @@ exporter (as `--set` and `--ss`), so its manifest still says the look is as auth
 **ETA.** Measured on the mini, authored is about 15 ms/frame at 1080p and 37 at 4K; max is about 300 at either size. A one-hour
 max-quality job at 60 fps is about 18 hours: `status` says so as an ETA and the job is never refused. Once segments finish,
 the ETA is measured from this run's own rate.
+
+## Choosing the render pipeline
+
+All four pipelines render the same scene with the same quality knobs and frame clock. `pipeline` chooses how frames reach
+the MP4 encoder; it does not set the render resolution or lower scene quality.
+
+| Pipeline | Use it for | Capture and encoding |
+| --- | --- | --- |
+| `master` | Lossless archives, studies, and re-encoding deliveries later | Existing lossless RGB segment masters, then an eight-bit HEVC MP4. Default; master retention remains off unless requested. |
+| `gpu` | Everyday production MP4s | Resize on the GPU when supersampling, read back output-sized RGB, encode eight-bit HEVC using VideoToolbox. Extremely close to the old output in the measured comparison. |
+| `gpu-main10` | Highest measured production fidelity, especially faint colours | Same GPU capture, direct ten-bit YUV conversion and VideoToolbox HEVC Main10. Source RGB is still eight-bit; this is SDR, not HDR. |
+| `browser` | Short scene-planning tests and fastest turnaround | GPU capture into VideoFrame, direct browser HEVC encoding at fixed QP1, then MP4 muxing. Small measured fidelity loss compared with the old output. |
+
+`master: true` is only accepted with the master pipeline; it is refused for the three direct pipelines, which have no
+lossless master. `browser` refuses nonempty `delivery` because its HEVC QP1 is fixed. The other pipelines keep the existing
+`60M` bitrate default (75M cap, 120M buffer); choose `delivery: { "vt_quality": 100 }` for highest-fidelity production
+encoding. Larger output files are expected at that setting. Main10 playback depends on player support.
+
+Supersampling is a separate choice: for a **1920x1080 output**, `ss: 2` renders **3840x2160**, then averages those four
+rendered pixels per output pixel in linear light. This can reduce jagged edges and unstable fine detail; it does not upscale
+1080p into 4K. `ss: 1` renders 1920x1080 directly and avoids that fourfold pixel count. GPU pipelines support both; with
+ss 1 no resize is needed. `quality: "max"` chooses ss 2 for 1080p or smaller; use an explicit quality object with ss 1 to
+keep the other maximum knobs while avoiding supersampling. How visible that difference is depends on the look.
+
+For short tests:
+```json
+{"preset":"3","size":"1080p","seconds":5,"pipeline":"browser","quality":"authored"}
+```
+For production, with maximum scene settings but direct 1080p rendering:
+```json
+{"preset":"3","size":"1080p","seconds":30,"pipeline":"gpu-main10","quality":{"tex_resolution":4096,"bake_resolution":0,"sample_count":48,"ss":1},"delivery":{"vt_quality":100}}
+```
+Use `pipeline: "gpu"` for eight-bit output, or `quality: "max"` for supersampled production output.
+The API summaries and details, CLI submit/status JSON and CLI list show the effective pipeline, including master on older jobs.
+
+In two matched 30-second 1080p60 clips on an **M1 Pro**, all rendered at 4K then downscaled, GPU eight-bit took 5m28s–5m50s
+versus 6m28s–6m46s for the old master workflow (14–16% faster). Browser took 5m02s–5m25s (20–22% faster); Main10 took
+5m30s–5m57s (12–15% faster). These used vt_quality 100 or browser QP1. Main10 had the best measured source fidelity but
+roughly twice the file size; GPU eight-bit was near-identical to the old MP4. These are two looks and one run per method,
+not M4 mini timing guarantees or proof that every human sees no difference. Timings compare old render plus delivery encode
+with direct capture/encode/mux including setup; they exclude subsequent verification and predate server segment integration. Before a measured segment, ETA keeps
+the existing quality-based estimates and applies no speculative pipeline speed multiplier.
 
 ## Where things are
 
@@ -80,7 +123,10 @@ If not, the job **stays queued** with the reason in `blocked` (so a NAS that com
 `KOMOREBI_RENDER_ALLOW_LOCAL=1` skips the network-mount check, for tests and dev.
 
 Progress is finished segments over `ceil(seconds / 10)`, read from `seg/*.json`. A job left running when the worker starts goes back
-to the queue and the exporter resumes it from its last committed segment.
+to the queue and the exporter resumes it from its last committed segment. Direct pipelines checkpoint motion and commit
+encoded MP4 segments instead of lossless masters, then concatenate them without re-encoding. Interrupted jobs keep those
+segments; after the final delivery is verified they are deleted. The manifest records encoded segment checksums and decoded
+frame counts. Browser capture avoids reading raw pixels for frame hashes. Direct outputs cannot be re-encoded from a master.
 
 ## Environment
 

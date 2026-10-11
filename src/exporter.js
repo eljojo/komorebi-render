@@ -16,9 +16,10 @@ export function exporterArgs({ script, commit, folder, spec }) {
     '--commit', commit, '--out', folder, '--seconds', String(spec.seconds), '--size', spec.size, '--fps', String(spec.fps)];
   for (const k of QUALITY_KEYS) if (q.set[k] !== undefined) args.push('--set', `${k}=${q.set[k]}`);
   if (q.ss > 1) args.push('--ss', String(q.ss));
+  if (spec.pipeline && spec.pipeline !== 'master') args.push('--pipeline', spec.pipeline);
   if (spec.delivery?.vt_bitrate) args.push('--vt-bitrate', spec.delivery.vt_bitrate);
   if (spec.delivery?.vt_quality !== undefined) args.push('--vt-quality', String(spec.delivery.vt_quality));
-  if (!spec.master) args.push('--discard-master');
+  if (!spec.master && (!spec.pipeline || spec.pipeline === 'master')) args.push('--discard-master');
   return args;
 }
 

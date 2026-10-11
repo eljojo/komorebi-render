@@ -7,7 +7,8 @@ export class SpecError extends Error {
   constructor(errors) { super(errors.join('; ')); this.name = 'SpecError'; this.errors = errors; this.fields = errors.map(fieldOf); }
 }
 
-export const SPEC_KEYS = ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality'];
+export const SPEC_KEYS = ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline'];
+export const PIPELINES = ['master', 'gpu', 'gpu-main10', 'browser'];
 export const DELIVERY_KEYS = ['vt_bitrate', 'vt_quality'];
 const KEYS = SPEC_KEYS;
 
@@ -65,10 +66,18 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS } = {}) {
   else if (typeof raw.master === 'boolean') spec.master = raw.master;
   else errors.push('master must be true or false');
 
+  // Omitted pipeline stays omitted in stored specs, preserving older jobs and their exporter run keys.
+  if (raw.pipeline !== undefined) {
+    if (PIPELINES.includes(raw.pipeline)) spec.pipeline = raw.pipeline;
+    else errors.push('pipeline must be master, gpu, gpu-main10 or browser');
+  }
+  if (spec.pipeline && spec.pipeline !== 'master' && spec.master === true) errors.push('master must be false for a direct pipeline; only master retains lossless segments');
+
   if (raw.delivery !== undefined) {
     if (!isObject(raw.delivery)) errors.push('delivery must be an object');
     else {
       const d = raw.delivery, out = {};
+      if (spec.pipeline === 'browser' && Object.keys(d).length) errors.push('delivery must be omitted or empty for browser; it uses fixed HEVC QP1');
       for (const k of Object.keys(d)) if (!DELIVERY_KEYS.includes(k)) errors.push(`delivery.${k} is not a delivery option; allowed: vt_bitrate, vt_quality`);
       if (d.vt_bitrate !== undefined && d.vt_quality !== undefined) errors.push('delivery takes vt_bitrate or vt_quality, not both');
       else {

@@ -33,6 +33,29 @@ test('delivery options become the exporter flags', () => {
   assert.equal(b[b.indexOf('--vt-quality') + 1], '100');
 });
 
+test('direct pipelines use the same exporter with a pipeline flag and no discard-master flag', () => {
+  for (const pipeline of ['gpu', 'gpu-main10', 'browser']) {
+    const args = exporterArgs({ ...base, spec: spec({ pipeline, quality: { ss: 2 } }) });
+    assert.equal(args[0], base.script);
+    assert.equal(args[args.indexOf('--pipeline') + 1], pipeline);
+    assert.equal(args[args.indexOf('--ss') + 1], '2');
+    assert.ok(!args.includes('--discard-master'));
+  }
+  const legacy = exporterArgs({ ...base, spec: spec() });
+  assert.ok(!legacy.includes('--pipeline'));
+  assert.ok(legacy.includes('--discard-master'));
+  const explicit = exporterArgs({ ...base, spec: spec({ pipeline: 'master', master: true }) });
+  assert.ok(!explicit.includes('--discard-master'));
+});
+
+test('GPU delivery controls are forwarded while single-resolution quality does not add supersampling', () => {
+  for (const pipeline of ['gpu', 'gpu-main10']) {
+    const args = exporterArgs({ ...base, spec: spec({ pipeline, quality: { ss: 1 }, delivery: { vt_quality: 100 } }) });
+    assert.equal(args[args.indexOf('--vt-quality') + 1], '100');
+    assert.ok(!args.includes('--ss'));
+  }
+});
+
 test('caffeinate wraps the node run only where it exists', () => {
   const args = ['x.mjs', '--a'];
   assert.deepEqual(exporterCommand({ node: '/bin/node', args, caffeinate: true }), { cmd: 'caffeinate', args: ['-i', '/bin/node', 'x.mjs', '--a'] });

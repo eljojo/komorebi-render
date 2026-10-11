@@ -41,3 +41,14 @@ test('every example spec (a ```json spec block) is accepted by the validator', (
 test('the etiquette an agent must follow is written down', () => {
   for (const must of ['every 10 seconds', 'one worker', 'run.log', 'never resubmit blindly', 'hours']) assert.ok(doc.includes(must), `etiquette: ${must}`);
 });
+
+test('both guides describe all four pipelines, independent supersampling and delivery restrictions', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  for (const guide of [doc, readme]) {
+    for (const pipeline of ['master', 'gpu', 'gpu-main10', 'browser']) assert.ok(guide.includes(`\`${pipeline}\``), pipeline);
+    for (const fact of ['3840x2160', '1920x1080', 'ss: 1', 'QP1', 'M1 Pro', 'vt_quality', '60M']) assert.ok(guide.includes(fact), fact);
+    assert.match(guide, /master: true.*(?:refused|only)|(?:refused|only).*master: true/);
+  }
+  const examples = [...doc.matchAll(/```json spec\n([\s\S]*?)```/g)].map(m => JSON.parse(m[1]));
+  for (const pipeline of ['master', 'gpu', 'gpu-main10', 'browser']) assert.ok(examples.some(e => e.pipeline === pipeline), `example for ${pipeline}`);
+});

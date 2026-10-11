@@ -12,5 +12,5 @@ export function jobView(job, now = Date.now()) {
     eta = measured !== null ? { seconds: measured, basis: 'measured' } : { seconds: Math.round(estimateSeconds(spec) * (1 - done / total)), basis: 'estimate' };
   }
   const { pid, cancel_requested: _c, seg_done: _d, seg_base: _b, seg_total: _t, ...rest } = job;
-  return { ...rest, spec: redactSpec(spec), cancel_requested: job.cancel_requested, progress: { done, total, fraction: total ? done / total : 0 }, eta };
+  return { ...rest, pipeline: spec.pipeline ?? 'master', spec: redactSpec(spec), cancel_requested: job.cancel_requested, progress: { done, total, fraction: total ? done / total : 0 }, eta };
 }

@@ -36,7 +36,7 @@ export async function main(argv, env = process.env, io = { out: (s) => console.l
       }
       case 'list': {
         for (const j of open().list({ state: arg }).map((x) => jobView(x))) {
-          io.out([j.id, j.state, `${j.progress.done}/${j.progress.total}`, j.quality.name, fmtEta(j.eta?.seconds), j.folder_name, j.blocked ?? ''].join('\t'));
+          io.out([j.id, j.state, `${j.progress.done}/${j.progress.total}`, j.quality.name, j.pipeline, fmtEta(j.eta?.seconds), j.folder_name, j.blocked ?? ''].join('\t'));
         }
         return 0;
       }

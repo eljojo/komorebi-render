@@ -40,6 +40,37 @@ const rig = (over = {}) => {
   return { out, config, store, api, call, submit, finished, nas };
 };
 
+test('API accepts and displays every pipeline, including the effective master default on older jobs', async () => {
+  const { call, submit, store } = rig();
+  const old = submit();
+  assert.equal('pipeline' in store.get(old.id).spec, false);
+  assert.equal((await call('GET', `/jobs/${old.id}`)).json.pipeline, 'master');
+  for (const pipeline of ['master', 'gpu', 'gpu-main10', 'browser']) {
+    const r = await call('POST', '/jobs', { ...SPEC, pipeline });
+    assert.equal(r.status, 201);
+    const detail = (await call('GET', `/jobs/${r.json.id}`)).json;
+    assert.equal(detail.pipeline, pipeline);
+    assert.equal(detail.spec.pipeline, pipeline);
+  }
+  assert.deepEqual((await call('GET', '/jobs')).json.jobs.map(j => j.pipeline), ['browser', 'gpu-main10', 'gpu', 'master', 'master']);
+});
+
+test('API refuses incompatible master and browser delivery choices with their fields', async () => {
+  const { call, store } = rig();
+  for (const [extra, field] of [
+    [{ pipeline: 'gpu', master: true }, 'master'],
+    [{ pipeline: 'gpu-main10', master: true }, 'master'],
+    [{ pipeline: 'browser', master: true }, 'master'],
+    [{ pipeline: 'browser', delivery: { vt_quality: 100 } }, 'delivery'],
+    [{ pipeline: 'unknown' }, 'pipeline'],
+  ]) {
+    const r = await call('POST', '/jobs', { ...SPEC, ...extra });
+    assert.equal(r.status, 422);
+    assert.equal(r.json.field, field);
+  }
+  assert.equal(store.list().length, 0);
+});
+
 test('POST /jobs queues a job: 201 with id, state and the folder it will land in', async () => {
   const { call, store, out } = rig();
   const r = await call('POST', '/jobs', { ...SPEC, quality: 'max' });

@@ -20,13 +20,14 @@ Unknown top-level fields are refused. Defaults apply to omitted optional fields.
 | `size` | `1080p`, `4k`, or even `WxH` from 64x64 through 7680x4320. Aliases normalize to 1920x1080 and 3840x2160. No default. |
 | `seconds` | Whole number, 1 to KOMOREBI_RENDER_MAX_SECONDS (default maximum 21600 = 6 hours). No default. |
 | `fps` | 30 or 60; default 60. |
-| `master` | Boolean, default false. True keeps lossless segments; false deletes them only after delivery verification. |
+| `master` | Boolean, default false. True keeps lossless segments on pipeline master; false deletes them only after delivery verification. Direct pipelines refuse true. |
 | `quality` | `authored` (default), `max`, or an object of the four fields below. An empty object is authored. |
+| `pipeline` | `master` (default), `gpu`, `gpu-main10`, `browser`. Capture and encoding mechanism, independent of quality and supersampling. Older specs without this field still use master. |
 | `quality.tex_resolution` | 1024, 2048, 4096. Omitted: the look's saved value. |
 | `quality.bake_resolution` | 0, 768, 1024, 1536, 2048. 0 follows tex_resolution. Omitted: the look's saved value. |
 | `quality.sample_count` | Whole number from 16 to 48. Omitted: the look's saved value. |
 | `quality.ss` | 1, 2. Default 1 for authored/custom. Renders at this multiple and downscales. |
-| `delivery` | Optional object: choose vt_bitrate or vt_quality, not both. Omitted or empty uses the exporter's 60M bitrate default, with a 75M cap and 120M buffer. |
+| `delivery` | Optional object: choose vt_bitrate or vt_quality, not both. Omitted or empty uses the exporter's 60M bitrate default, with a 75M cap and 120M buffer, except browser, whose fixed HEVC QP1 requires omitted or empty delivery. |
 | `delivery.vt_bitrate` | Positive bitrate string with k, K or M, such as `60M`, `80M` or `8000k`. Lowercase m is refused because ffmpeg reads it as milli. |
 | `delivery.vt_quality` | Whole number 0 to 100; mutually exclusive with vt_bitrate. |
 
@@ -34,6 +35,50 @@ Only quality keys become --set or --ss; the look stays as authored. Max means te
 sample_count 48 and ss 2 at 1080p or smaller (ss 1 above 1080p). Max costs about 300 ms/frame on the M4; authored costs
 about 15 ms/frame at 1080p or 37 ms/frame at 4K. Max at 1080p is about 20 times authored. One hour of max at 60 fps can
 take about 18 hours to render; such jobs are normal and are not refused because of cost.
+
+## Pipeline choices
+
+All four use the same scene parameters and deterministic clock. Choose the mechanism with `pipeline`:
+
+| Value | Intended use and output |
+| --- | --- |
+| `master` | Existing lossless RGB segment masters followed by an eight-bit HEVC MP4. For archives, studies or later re-encoding; the default. |
+| `gpu` | Everyday production: GPU resize when supersampling, output-sized RGB readback, VideoToolbox eight-bit HEVC MP4. Near-identical to the old output in the measured comparison. |
+| `gpu-main10` | Highest measured production fidelity, especially faint colours: GPU capture, direct ten-bit YUV conversion, VideoToolbox HEVC Main10 MP4. Eight-bit source RGB, SDR BT709, not HDR. Player Main10 support is required. |
+| `browser` | Short scene-planning tests and fastest turnaround: GPU VideoFrame capture, direct browser HEVC QP1 encoding and MP4 muxing. Small measured fidelity loss compared with the old output. |
+
+master: true is only accepted with the master pipeline; the three direct pipelines have no lossless master.
+browser refuses nonempty delivery; its QP1 is fixed. master, gpu and gpu-main10 keep 60M as the default; choose
+`delivery.vt_quality` 100 for highest-fidelity encoding, at the expense of larger files. Bit depth does not restore source
+detail already absent from the rendered RGB.
+
+Supersampling is independent of pipeline: a 1920x1080 output with ss: 2 renders at 3840x2160, then averages four rendered
+pixels into each output pixel in linear light. This can reduce jagged edges and unstable fine detail. It is 4K down to
+1080p, not 1080p up to 4K. ss: 1 renders the output size directly and avoids four times as many pixels. All direct pipelines
+support ss 1 and 2. To keep maximum scene knobs but render straight 1080p, specify the quality object with ss 1 below;
+quality max otherwise selects ss 2 at 1080p or smaller. A GPU pipeline does not force 4K rendering.
+
+Two matched 30-second 1080p60 clips, supersampled from 4K on an M1 Pro, measured master 6m28s–6m46s, gpu 5m28s–5m50s
+(14–16% faster), gpu-main10 5m30s–5m57s (12–15% faster), and browser 5m02s–5m25s (20–22% faster). VideoToolbox used
+vt_quality 100; browser used QP1. Main10 showed the best source fidelity, with about twice the file size. Only two looks
+and one run per method were measured; these are not M4 mini timing guarantees or a universal human-perception result.
+Timing compares master render plus delivery encode against direct capture/encode/mux with setup, excluding subsequent
+verification and predating server segment integration. Initial ETA uses existing quality estimates without a pipeline multiplier; measured segment rates replace it.
+
+Master and production examples:
+```json spec
+{"preset":"3","size":"1080p","seconds":30,"pipeline":"master","master":true,"quality":"max","delivery":{"vt_quality":100}}
+```
+```json spec
+{"preset":"3","size":"1080p","seconds":30,"pipeline":"gpu","quality":"max","delivery":{"vt_quality":100}}
+```
+```json spec
+{"preset":"3","size":"1080p","seconds":30,"pipeline":"gpu-main10","quality":{"tex_resolution":4096,"bake_resolution":0,"sample_count":48,"ss":1},"delivery":{"vt_quality":100}}
+```
+Short planning test:
+```json spec
+{"preset":"3","size":"1080p","seconds":5,"pipeline":"browser","quality":"authored"}
+```
 
 Preset example:
 ```json spec
@@ -59,12 +104,12 @@ curl -sS "$base/jobs" -H 'Content-Type: application/json' -d '{"preset":"3@2","s
 ```
 
 GET /jobs — newest first, wrapped in `jobs`; each summary has id, state, name (preset or look), size, seconds, fps,
-resolved quality, progress, eta_s, eta_basis, blocked and timestamps.
+resolved quality, effective pipeline, progress, eta_s, eta_basis, blocked and timestamps.
 ```sh
 curl -sS "$base/jobs"
 ```
 ```json
-{"jobs":[{"id":1,"state":"queued","name":"preset 3@2","size":"1920x1080","seconds":30,"fps":60,"quality":{"name":"max","set":{"tex_resolution":4096,"bake_resolution":0,"sample_count":48},"ss":2},"progress":{"done":0,"total":3,"fraction":0},"eta_s":540,"eta_basis":"estimate","blocked":null,"created_at":"2026-10-10T10:00:00Z","started_at":null,"finished_at":null}]}
+{"jobs":[{"id":1,"state":"queued","name":"preset 3@2","size":"1920x1080","seconds":30,"fps":60,"pipeline":"master","quality":{"name":"max","set":{"tex_resolution":4096,"bake_resolution":0,"sample_count":48},"ss":2},"progress":{"done":0,"total":3,"fraction":0},"eta_s":540,"eta_basis":"estimate","blocked":null,"created_at":"2026-10-10T10:00:00Z","started_at":null,"finished_at":null}]}
 ```
 
 GET /jobs/:id — summary fields above plus redacted spec, folder, delivery (path, size_mib, mbit_s), error,
@@ -108,6 +153,9 @@ Poll GET /jobs/:id no faster than every 10 seconds. States are `queued`, `runnin
 `progress.done` counts completed 10-second segments; `progress.total` is ceil(seconds / 10). `eta_s` is seconds remaining
 for this job, not queue waiting time. `eta_basis` is `estimate` until a segment from the current attempt finishes, then
 `measured` from that attempt's segment rate. Terminal states have null ETA. A restart resumes unfinished segments.
+Direct pipelines commit encoded MP4 segments and motion checkpoints, then concatenate without re-encoding. Interrupted
+jobs keep encoded segments; successful delivery verification deletes them. Their manifest records encoded checksums and
+decoded frame counts; browser capture avoids raw pixel readback for frame hashes. Direct outputs have no master to re-encode.
 
 A missing, unwritable or non-network NAS keeps the job `queued` with `blocked` explaining why; the worker retries when
 the share returns. It does not render onto the Mac's disk and does not fail the job just because the share is missing.
@@ -126,5 +174,5 @@ Preset share tokens and the worker's arboretum token never appear in responses o
 
 Outputs land in KOMOREBI_RENDER_OUT, normally /Volumes/home/komorebi/jobs, under `<yyyy-mm-dd>-<id>-<slug>/`.
 Preset slugs use only the id; look slugs use the name. Each job leaves delivery.mp4, manifest.json and run.log.
-seg/ holds lossless masters only when master is true; look-input.json is the preserved input for a look job.
+seg/ holds lossless masters only when pipeline is master and master is true; look-input.json is the preserved input for a look job.
 The delivery path is a filesystem path on the NAS, not an HTTP download URL.

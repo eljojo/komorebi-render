@@ -11,7 +11,7 @@
       # Only what the server and its tests need: a stray file in the checkout must not change the package's hash.
       source = pkgs: pkgs.lib.fileset.toSource {
         root = ./.;
-        fileset = pkgs.lib.fileset.unions [ ./src ./scripts ./test ./fixtures ./komorebi.json ./package.json ./llms.txt ];
+        fileset = pkgs.lib.fileset.unions [ ./src ./scripts ./test ./fixtures ./komorebi.json ./package.json ./llms.txt ./README.md ];
       };
     in {
       # `nix develop -c node --test` — node 22 (node:sqlite works without a flag from 22.13, with an ExperimentalWarning
