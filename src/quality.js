@@ -8,6 +8,8 @@ const CHOICES = {
   ss: [1, 2],
 };
 const SAMPLES = [16, 48];   // the editor's own range (editor.js PANEL)
+export const QUALITY_FIELDS = [...QUALITY_KEYS, 'ss'];
+export const QUALITY_CHOICES = { ...CHOICES, sample_count: SAMPLES };   // sample_count is a range: [min, max]
 const MAX_SET = { tex_resolution: 4096, bake_resolution: 0, sample_count: 48 };
 const FULL_HD = [1920, 1080];
 
@@ -15,7 +17,7 @@ const FULL_HD = [1920, 1080];
 export function checkQuality(q) {
   if (q === undefined || q === 'authored') return { value: 'authored', errors: [] };
   if (q === 'max') return { value: 'max', errors: [] };
-  const names = [...QUALITY_KEYS, 'ss'];
+  const names = QUALITY_FIELDS;
   if (q === null || typeof q !== 'object' || Array.isArray(q)) {
     return { errors: [`quality must be "authored", "max" or an object of ${names.join(', ')}`] };
   }

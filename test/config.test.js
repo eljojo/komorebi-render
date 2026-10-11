@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadConfig, loadPin } from '../src/config.js';
 
 test('defaults: state under the home, no output root, 6 h maximum, listen on 0.0.0.0', () => {
@@ -11,6 +14,8 @@ test('defaults: state under the home, no output root, 6 h maximum, listen on 0.0
   assert.equal(c.out, null);
   assert.equal(c.maxSeconds, 21600);
   assert.equal(c.host, '0.0.0.0');
+  assert.equal(c.port, 8077);
+  assert.equal(c.token, null);
   assert.equal(c.allowLocal, false);
   assert.equal(c.engineDir('abc'), '/home/u/.local/state/komorebi-render/engine/abc');
 });
@@ -30,6 +35,29 @@ test('a bad maximum is refused at startup, not at the first job', () => {
 test('the pin is a full sha', () => {
   const pin = loadPin();
   assert.match(pin.commit, /^[0-9a-f]{40}$/);
-  assert.equal(pin.commit, 'a6b6fa25a98d47fa8ae312b4bfae4c9fde99f849');
+  assert.equal(pin.commit, '6d3ee0ad83c0f5254f2ef2045037b732c3197fbf');
   assert.match(pin.repo, /^https:\/\/github\.com\/eljojo\/komorebi/);
+});
+
+test('the port is KOMOREBI_RENDER_PORT; a bad one is refused at startup (0 is allowed: the OS picks, for tests)', () => {
+  assert.equal(loadConfig({ KOMOREBI_RENDER_PORT: '9000' }, '/h').port, 9000);
+  assert.equal(loadConfig({ KOMOREBI_RENDER_PORT: '0' }, '/h').port, 0);
+  for (const v of ['-1', '65536', 'abc', '80.5', '']) assert.throws(() => loadConfig({ KOMOREBI_RENDER_PORT: v }, '/h'), /KOMOREBI_RENDER_PORT/);
+});
+
+const tokenFile = (text) => { const f = join(mkdtempSync(join(tmpdir(), 'kr-tok-')), 'token'); writeFileSync(f, text); return f; };
+
+test('KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE is read at start into the token, its trailing newline dropped', () => {
+  const c = loadConfig({ KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE: tokenFile('s3cret-token\n') }, '/h');
+  assert.equal(c.token, 's3cret-token');
+});
+
+test('ARBORETUM_TOKEN in the environment wins over the file', () => {
+  const c = loadConfig({ ARBORETUM_TOKEN: 'from-env', KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE: tokenFile('from-file') }, '/h');
+  assert.equal(c.token, 'from-env');
+});
+
+test('a token file that is missing or empty stops startup, naming the path and never the contents', () => {
+  assert.throws(() => loadConfig({ KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE: '/nonexistent/kr-token' }, '/h'), /KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE.*\/nonexistent\/kr-token/);
+  assert.throws(() => loadConfig({ KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE: tokenFile(' \n') }, '/h'), /is empty/);
 });

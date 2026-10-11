@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateSpec, SpecError } from '../src/spec.js';
-import { resolveQuality, msPerFrame, estimateSeconds } from '../src/quality.js';
+import { resolveQuality, msPerFrame, estimateSeconds, QUALITY_FIELDS, QUALITY_CHOICES } from '../src/quality.js';
 import { exporterArgs } from '../src/exporter.js';
 import { jobView } from '../src/view.js';
 
@@ -98,4 +98,9 @@ test('once segments finish the ETA is measured; finished jobs have none', () => 
   const run = jobView(job({ state: 'running', seg_done: 2, started_at: new Date(t0).toISOString() }), t0 + 20_000);
   assert.deepEqual([run.eta.seconds, run.eta.basis], [80, 'measured']);
   assert.equal(jobView(job({ state: 'done', seg_done: 10 }), t0).eta, null);
+});
+
+test('the fields and allowed values the validator knows are exported, for the docs that must list them', () => {
+  assert.deepEqual(QUALITY_FIELDS, ['tex_resolution', 'bake_resolution', 'sample_count', 'ss']);
+  assert.deepEqual(QUALITY_CHOICES, { tex_resolution: [1024, 2048, 4096], bake_resolution: [0, 768, 1024, 1536, 2048], ss: [1, 2], sample_count: [16, 48] });
 });

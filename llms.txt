@@ -1,0 +1,130 @@
+# komorebi-render API
+
+komorebi-render queues videos of sunlight through leaves and runs komorebi's pinned WebGL2 exporter on the Mac mini's GPU.
+There is one worker, so jobs queue. The API and worker run together with `komorebi-render serve`.
+The default address is http://<mini's tailnet name or IP>:8077; KOMOREBI_RENDER_HOST defaults to 0.0.0.0.
+There is no authentication yet. Use the LAN or tailnet; authentication must precede Cloudflare exposure.
+Responses are JSON except GET /llms.txt. Examples below use `base=http://jojo-m4-mini:8077`.
+
+## Job spec
+
+POST the spec itself, without a wrapper. Exactly one of `preset` or `look` is required; `size` and `seconds` are required.
+Unknown top-level fields are refused. Defaults apply to omitted optional fields.
+
+| Field | Limits and default |
+| --- | --- |
+| `preset` | String `<positive id>[@positive version][:share]`, such as `3`, `3@2` or `3:share`. Without a version, the exporter pins the head on first run. A share token opens an unlisted preset and is redacted in responses. Private presets need the worker's ARBORETUM_TOKEN or KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE. |
+| `look` | Object with `look.params` and optional `look.name`; exactly one of preset or look. |
+| `look.params` | An object of editor params, as saved by komorebi. Required for a look job. |
+| `look.name` | Optional string; unnamed looks are called `look`. |
+| `size` | `1080p`, `4k`, or even `WxH` from 64x64 through 7680x4320. Aliases normalize to 1920x1080 and 3840x2160. No default. |
+| `seconds` | Whole number, 1 to KOMOREBI_RENDER_MAX_SECONDS (default maximum 21600 = 6 hours). No default. |
+| `fps` | 30 or 60; default 60. |
+| `master` | Boolean, default false. True keeps lossless segments; false deletes them only after delivery verification. |
+| `quality` | `authored` (default), `max`, or an object of the four fields below. An empty object is authored. |
+| `quality.tex_resolution` | 1024, 2048, 4096. Omitted: the look's saved value. |
+| `quality.bake_resolution` | 0, 768, 1024, 1536, 2048. 0 follows tex_resolution. Omitted: the look's saved value. |
+| `quality.sample_count` | Whole number from 16 to 48. Omitted: the look's saved value. |
+| `quality.ss` | 1, 2. Default 1 for authored/custom. Renders at this multiple and downscales. |
+| `delivery` | Optional object: choose vt_bitrate or vt_quality, not both. Omitted or empty uses the exporter's 60M bitrate default, with a 75M cap and 120M buffer. |
+| `delivery.vt_bitrate` | Positive bitrate string with k, K or M, such as `60M`, `80M` or `8000k`. Lowercase m is refused because ffmpeg reads it as milli. |
+| `delivery.vt_quality` | Whole number 0 to 100; mutually exclusive with vt_bitrate. |
+
+Only quality keys become --set or --ss; the look stays as authored. Max means tex_resolution 4096, bake_resolution 0,
+sample_count 48 and ss 2 at 1080p or smaller (ss 1 above 1080p). Max costs about 300 ms/frame on the M4; authored costs
+about 15 ms/frame at 1080p or 37 ms/frame at 4K. Max at 1080p is about 20 times authored. One hour of max at 60 fps can
+take about 18 hours to render; such jobs are normal and are not refused because of cost.
+
+Preset example:
+```json spec
+{"preset":"3@2","size":"1080p","seconds":30}
+```
+Look example:
+```json spec
+{"look":{"name":"Autumn Gold","params":{}},"size":"4k","seconds":60,"fps":30}
+```
+Quality and delivery example:
+```json spec
+{"preset":"3","size":"1080p","seconds":300,"quality":{"tex_resolution":2048,"bake_resolution":1536,"sample_count":32,"ss":2},"delivery":{"vt_bitrate":"80M"}}
+```
+
+## Routes
+
+POST /jobs — validate and queue; 201 with id, state and folder. The folder is null if no output root is configured.
+```sh
+curl -sS "$base/jobs" -H 'Content-Type: application/json' -d '{"preset":"3@2","size":"1080p","seconds":30,"quality":"max"}'
+```
+```json
+{"id":1,"state":"queued","folder":"/Volumes/home/komorebi/jobs/2026-10-10-1-preset-3"}
+```
+
+GET /jobs — newest first, wrapped in `jobs`; each summary has id, state, name (preset or look), size, seconds, fps,
+resolved quality, progress, eta_s, eta_basis, blocked and timestamps.
+```sh
+curl -sS "$base/jobs"
+```
+```json
+{"jobs":[{"id":1,"state":"queued","name":"preset 3@2","size":"1920x1080","seconds":30,"fps":60,"quality":{"name":"max","set":{"tex_resolution":4096,"bake_resolution":0,"sample_count":48},"ss":2},"progress":{"done":0,"total":3,"fraction":0},"eta_s":540,"eta_basis":"estimate","blocked":null,"created_at":"2026-10-10T10:00:00Z","started_at":null,"finished_at":null}]}
+```
+
+GET /jobs/:id — summary fields above plus redacted spec, folder, delivery (path, size_mib, mbit_s), error,
+last_line, log_tail (last 20 lines), quality_vs_master from the manifest when measured, cancel_requested and attempts.
+Fields without a result are null; log_tail is empty before a run. The example shows the additional fields; summaries remain.
+```sh
+curl -sS "$base/jobs/1"
+```
+```json
+{"id":1,"state":"done","folder":"/Volumes/home/komorebi/jobs/2026-10-10-1-preset-3","delivery":{"path":"/Volumes/home/komorebi/jobs/2026-10-10-1-preset-3/delivery.mp4","size_mib":212.8,"mbit_s":59.5},"spec":{"preset":"3@2","size":"1920x1080","seconds":30,"fps":60,"master":false,"quality":"max"},"error":null,"last_line":"done","log_tail":["delivery verified","done"],"quality_vs_master":null,"cancel_requested":false,"attempts":1}
+```
+
+DELETE /jobs/:id — queued jobs cancel immediately (200); running jobs request cancellation (202), then the worker stops
+the exporter. The folder is kept. A completed, failed or already cancelled job returns 409; an unknown id returns 404.
+```sh
+curl -sS -X DELETE "$base/jobs/1"
+```
+```json
+{"id":1,"cancel":"requested","state":"running"}
+```
+For a queued job: `{"id":1,"cancel":"cancelled","state":"cancelled"}`.
+
+GET /health — 200 with ok, the pinned commit, worker (idle, busy or blocked), and nas (ok or missing).
+`ok` means the API is responding; inspect nas and worker before assuming a job can run.
+```sh
+curl -sS "$base/health"
+```
+```json
+{"ok":true,"pin":"6d3ee0ad83c0f5254f2ef2045037b732c3197fbf","worker":"idle","nas":"ok"}
+```
+
+GET /llms.txt — 200, text/plain; this document.
+```sh
+curl -sS "$base/llms.txt"
+```
+The response starts with `# komorebi-render API`.
+
+## Polling, refusals and outputs
+
+Poll GET /jobs/:id no faster than every 10 seconds. States are `queued`, `running`, `done`, `failed` and `cancelled`.
+`progress.done` counts completed 10-second segments; `progress.total` is ceil(seconds / 10). `eta_s` is seconds remaining
+for this job, not queue waiting time. `eta_basis` is `estimate` until a segment from the current attempt finishes, then
+`measured` from that attempt's segment rate. Terminal states have null ETA. A restart resumes unfinished segments.
+
+A missing, unwritable or non-network NAS keeps the job `queued` with `blocked` explaining why; the worker retries when
+the share returns. It does not render onto the Mac's disk and does not fail the job just because the share is missing.
+An engine that cannot prepare also leaves a queued job blocked. A render failure sets `failed` and retains its folder and log.
+Read the run.log tail before resubmitting a failed job, and never resubmit blindly. Long jobs take hours: trust the ETA.
+
+A refused spec is 422 with `error` and `field` (null for the whole spec), plus `errors` listing all field/error pairs:
+```sh
+curl -sS "$base/jobs" -H 'Content-Type: application/json' -d '{"preset":"3","size":"1080p","seconds":0}'
+```
+```json
+{"error":"seconds must be a whole number from 1 to at most 21600","field":"seconds","errors":[{"field":"seconds","error":"seconds must be a whole number from 1 to at most 21600"}]}
+```
+Invalid JSON is 400; a body over 1048576 bytes is 413. Unknown routes/jobs are 404, wrong methods 405, unexpected errors 500.
+Preset share tokens and the worker's arboretum token never appear in responses or logs.
+
+Outputs land in KOMOREBI_RENDER_OUT, normally /Volumes/home/komorebi/jobs, under `<yyyy-mm-dd>-<id>-<slug>/`.
+Preset slugs use only the id; look slugs use the name. Each job leaves delivery.mp4, manifest.json and run.log.
+seg/ holds lossless masters only when master is true; look-input.json is the preserved input for a look job.
+The delivery path is a filesystem path on the NAS, not an HTTP download URL.

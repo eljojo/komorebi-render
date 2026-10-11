@@ -36,6 +36,7 @@ komorebi-render status <id>            progress, ETA, result or error
 komorebi-render cancel <id>            queued: cancelled now; running: the exporter is stopped, the folder is kept
 komorebi-render prepare                make the pinned engine ready; idempotent
 komorebi-render worker                 run queued jobs
+komorebi-render serve                  run the HTTP API and one worker together
 ```
 
 `cancel` and `submit` only write the database; a running `worker` (any process, same state dir) does the rest.
@@ -84,8 +85,61 @@ to the queue and the exporter resumes it from its last committed segment.
 ## Environment
 
 `KOMOREBI_RENDER_STATE`, `KOMOREBI_RENDER_OUT`, `KOMOREBI_RENDER_MAX_SECONDS` (21600), `KOMOREBI_RENDER_ALLOW_LOCAL`,
-`KOMOREBI_RENDER_HOST` (the API's listen address, default `0.0.0.0`, no auth: for the LAN), `ARBORETUM_TOKEN` (given to the exporter
-alone; never logged or stored).
+`KOMOREBI_RENDER_HOST` (the API's listen address, default `0.0.0.0`, no auth: for the LAN), `KOMOREBI_RENDER_PORT` (8077),
+`ARBORETUM_TOKEN` (given to the exporter alone; never logged or stored), `KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE` (optional
+absolute path to a token read once at startup; the environment token takes precedence).
+
+## HTTP API
+
+`komorebi-render serve` runs the API and worker in one process. [llms.txt](llms.txt) documents every spec field, route,
+response and polling rule; it is also served at `/llms.txt`. Routes are `POST /jobs`, `GET /jobs`, `GET /jobs/:id`,
+`DELETE /jobs/:id` and `GET /health`. Poll no faster than every 10 seconds. There is no auth yet; use the LAN or tailnet.
+
+## Deploying on the mini
+
+Add the input to dotfiles' `flake.nix`:
+
+```nix
+inputs.komorebi-render.url = "github:eljojo/komorebi-render";
+```
+
+In `mkMac`'s modules list, import the module and enable it under the same host guard as `nix/r2d2-mount.nix`:
+
+```nix
+inputs.komorebi-render.darwinModules.default
+({ lib, hostName, ... }: lib.mkIf (hostName == "jojo-m4-mini") {
+  services.komorebi-render = {
+    enable = true;
+    outDir = "/Volumes/home/komorebi/jobs";
+    # Optional: use a quoted runtime path, never a Nix path literal or builtins.readFile.
+    # arboretumTokenFile = "/Users/jojo/.config/komorebi/arboretum-token";
+  };
+})
+```
+
+The agent runs in `system.primaryUser`'s session (`jojo` in dotfiles), with state under
+`/Users/<user>/.local/state/komorebi-render`. The options are `enable`, `package`, `host` (`0.0.0.0`), `port` (8077),
+`stateDir`, required `outDir`, `maxSeconds` (21600), and nullable `arboretumTokenFile`. Token files are read by the program;
+their contents never enter the Nix store. Activation creates the state directory before launchd opens its logs.
+
+The launchd user agent runs `/usr/bin/caffeinate -i <package>/bin/komorebi-render serve`, with KeepAlive and RunAtLoad.
+It needs the owner logged in for GPU access. Service stdout and stderr are `stdout.log` and `stderr.log` under stateDir.
+The flake checks evaluate the module with `lib.evalModules` and stub launchd/activation options; assertions cover its
+defaults, overrides, environment, arguments and log-directory setup without building a full nix-darwin system.
+
+After applying dotfiles on the mini, prepare the engine once using the package from the same dotfiles lock:
+
+```sh
+nix run --inputs-from ~/code/dotfiles komorebi-render -- prepare
+```
+
+Chromium is installed by Playwright under stateDir (nixpkgs has no Chromium on darwin). The first queued job also prepares
+the engine if needed. Reach the API at `http://<mini's tailnet name or IP>:8077`:
+
+```sh
+curl -sS http://jojo-m4-mini:8077/health
+curl -sS http://jojo-m4-mini:8077/llms.txt
+```
 
 ## Pinning komorebi
 

@@ -1,4 +1,4 @@
-// Everything the environment decides, read once. The ARBORETUM_TOKEN lives here and is handed to the exporter alone:
+// Everything the environment decides, read once. The ARBORETUM_TOKEN (or the file it is read from) lives here and is handed to the exporter alone:
 // never print a config.
 import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
@@ -13,6 +13,11 @@ export function loadConfig(env = process.env, home = homedir()) {
     maxSeconds = Number(env.KOMOREBI_RENDER_MAX_SECONDS);
     if (!Number.isInteger(maxSeconds) || maxSeconds < 1) throw new Error(`KOMOREBI_RENDER_MAX_SECONDS must be a whole number of seconds, got ${JSON.stringify(env.KOMOREBI_RENDER_MAX_SECONDS)}`);
   }
+  let port = 8077;
+  if (env.KOMOREBI_RENDER_PORT !== undefined) {
+    port = env.KOMOREBI_RENDER_PORT === '' ? NaN : Number(env.KOMOREBI_RENDER_PORT);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`KOMOREBI_RENDER_PORT must be a port number (0 to 65535), got ${JSON.stringify(env.KOMOREBI_RENDER_PORT)}`);
+  }
   return {
     state,
     dbPath: join(state, 'jobs.sqlite'),
@@ -23,8 +28,20 @@ export function loadConfig(env = process.env, home = homedir()) {
     allowLocal: env.KOMOREBI_RENDER_ALLOW_LOCAL === '1',
     maxSeconds,
     host: env.KOMOREBI_RENDER_HOST || '0.0.0.0',   // no auth: the API is for the LAN (brief 3)
-    token: env.ARBORETUM_TOKEN || null,
+    port,
+    token: env.ARBORETUM_TOKEN || readTokenFile(env.KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE),
   };
+}
+
+// The nix module hands the program a path, never the token: the token must not enter the nix store. Read once, at start.
+// A configured file that cannot be used stops the start (the message names the path, never the contents).
+function readTokenFile(file) {
+  if (!file) return null;
+  let text;
+  try { text = readFileSync(file, 'utf8'); } catch (e) { throw new Error(`KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE ${file} cannot be read (${e.code ?? e.message})`); }
+  const token = text.trim();
+  if (!token) throw new Error(`KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE ${file} is empty`);
+  return token;
 }
 
 export function loadPin(file = fileURLToPath(new URL('../komorebi.json', import.meta.url))) {

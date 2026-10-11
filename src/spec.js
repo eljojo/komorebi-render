@@ -2,11 +2,23 @@
 import { checkQuality } from './quality.js';
 
 export const DEFAULT_MAX_SECONDS = 6 * 3600;   // KOMOREBI_RENDER_MAX_SECONDS overrides: the config passes it in
+// `fields[i]` is the field `errors[i]` is about (null for the whole spec): the API answers 422 with it.
 export class SpecError extends Error {
-  constructor(errors) { super(errors.join('; ')); this.name = 'SpecError'; this.errors = errors; }
+  constructor(errors) { super(errors.join('; ')); this.name = 'SpecError'; this.errors = errors; this.fields = errors.map(fieldOf); }
 }
 
-const KEYS = ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality'];
+export const SPEC_KEYS = ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality'];
+export const DELIVERY_KEYS = ['vt_bitrate', 'vt_quality'];
+const KEYS = SPEC_KEYS;
+
+// Every message starts with the field it is about ("seconds must be…", "quality.ss must be…") except two.
+function fieldOf(message) {
+  const unknown = /^unknown key "(.*)"$/.exec(message);
+  if (unknown) return unknown[1];
+  if (message.startsWith('exactly one of preset or look')) return 'preset';
+  const m = /^((?:look|delivery|quality)\.\w+|\w+)/.exec(message);
+  return m && (KEYS.includes(m[1].split('.')[0])) ? m[1] : null;
+}
 const PRESET = /^([1-9]\d*)(?:@([1-9]\d*))?(?::(\S+))?$/;   // the exporter's own --arboretum grammar
 const BITRATE = /^[1-9]\d*(\.\d+)?[kKM]$/;   // ffmpeg reads a lowercase m as milli
 const SIZES = { '1080p': '1920x1080', '4k': '3840x2160' };
@@ -57,7 +69,7 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS } = {}) {
     if (!isObject(raw.delivery)) errors.push('delivery must be an object');
     else {
       const d = raw.delivery, out = {};
-      for (const k of Object.keys(d)) if (!['vt_bitrate', 'vt_quality'].includes(k)) errors.push(`delivery.${k} is not a delivery option; allowed: vt_bitrate, vt_quality`);
+      for (const k of Object.keys(d)) if (!DELIVERY_KEYS.includes(k)) errors.push(`delivery.${k} is not a delivery option; allowed: vt_bitrate, vt_quality`);
       if (d.vt_bitrate !== undefined && d.vt_quality !== undefined) errors.push('delivery takes vt_bitrate or vt_quality, not both');
       else {
         if (d.vt_bitrate !== undefined) {
@@ -94,3 +106,11 @@ export function folderName({ id, createdAt, spec }) {
 
 // The share token is a credential: it is stored (the exporter needs it to resume) but never shown.
 export const redactSpec = (spec) => (spec.preset ? { ...spec, preset: spec.preset.replace(/:.+$/, ':…') } : spec);
+
+// Hides the arboretum token and the preset's share token in text that may carry them (the exporter's output, a log line).
+export function scrubSecrets(text, spec, token) {
+  let t = String(text);
+  const share = spec.preset?.split(':')[1];
+  for (const secret of [token, share]) if (secret) t = t.split(secret).join('***');
+  return t;
+}

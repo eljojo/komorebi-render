@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateSpec, SpecError, folderName, slugify, redactSpec, DEFAULT_MAX_SECONDS } from '../src/spec.js';
+import { validateSpec, SpecError, folderName, slugify, redactSpec, scrubSecrets, SPEC_KEYS, DELIVERY_KEYS, DEFAULT_MAX_SECONDS } from '../src/spec.js';
 
 const ok = (raw) => validateSpec(raw);
 const bad = (raw, re) => assert.throws(() => validateSpec(raw), (e) => e instanceof SpecError && re.test(e.message));
@@ -94,4 +94,30 @@ test('slugify bounds the length and has a fallback', () => {
   assert.equal(slugify('  A  B  '), 'a-b');
   assert.equal(slugify('!!!'), 'look');
   assert.ok(slugify('x'.repeat(200)).length <= 40);
+});
+
+test('every refusal names the field it is about', () => {
+  const fields = (raw) => { try { validateSpec(raw); } catch (e) { return e.fields; } };
+  assert.deepEqual(fields({ preset: '3', size: '1080p', seconds: 5, bogus: 1 }), ['bogus']);
+  assert.deepEqual(fields({ preset: 'x', size: '8k', seconds: 0 }), ['preset', 'size', 'seconds']);
+  assert.deepEqual(fields({ size: '1080p', seconds: 5 }), ['preset']);
+  assert.deepEqual(fields({ preset: '3', size: '1080p', seconds: 5, fps: 24, master: 1 }), ['fps', 'master']);
+  assert.deepEqual(fields({ preset: '3', size: '1080p', seconds: 5, delivery: { vt_bitrate: '60m' } }), ['delivery.vt_bitrate']);
+  assert.deepEqual(fields({ preset: '3', size: '1080p', seconds: 5, delivery: { vt_bitrate: '6M', vt_quality: 5 } }), ['delivery']);
+  assert.deepEqual(fields({ preset: '3', size: '1080p', seconds: 5, quality: { tex_resolution: 3000 } }), ['quality.tex_resolution']);
+  assert.deepEqual(fields({ preset: '3', size: '1080p', seconds: 5, quality: 'best' }), ['quality']);
+  assert.deepEqual(fields({ look: { params: 3 }, size: '1080p', seconds: 5 }), ['look.params']);
+  assert.deepEqual(fields([]), [null]);
+});
+
+test('the keys the validator knows are exported, for the docs that must list them', () => {
+  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality']);
+  assert.deepEqual(DELIVERY_KEYS, ['vt_bitrate', 'vt_quality']);
+});
+
+test('scrubSecrets hides the arboretum token and the preset share token wherever they appear', () => {
+  const spec = ok({ preset: '3@2:shareTOK', size: '1080p', seconds: 5 });
+  const text = 'fetching 3:shareTOK with Bearer arbTOK; again shareTOK';
+  assert.equal(scrubSecrets(text, spec, 'arbTOK'), 'fetching 3:*** with Bearer ***; again ***');
+  assert.equal(scrubSecrets('plain', ok({ look: { params: {} }, size: '1080p', seconds: 5 }), null), 'plain');
 });

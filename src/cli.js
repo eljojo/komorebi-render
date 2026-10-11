@@ -1,4 +1,4 @@
-// komorebi-render submit|list|status|cancel|prepare|worker. Output is JSON (list: one line per job) so agents and curl-minded humans read it alike.
+// komorebi-render submit|list|status|cancel|prepare|worker|serve. Output is JSON (list: one line per job) so agents and curl-minded humans read it alike.
 import { readFileSync, mkdirSync } from 'node:fs';
 import { loadConfig, loadPin } from './config.js';
 import { openStore, StoreError } from './store.js';
@@ -6,6 +6,7 @@ import { validateSpec, SpecError } from './spec.js';
 import { jobView } from './view.js';
 import { prepare } from './engine.js';
 import { createWorker } from './worker.js';
+import { serve } from './serve.js';
 
 const USAGE = `usage: komorebi-render <command>
   submit <spec.json|->   validate and queue a job; prints it
@@ -14,7 +15,9 @@ const USAGE = `usage: komorebi-render <command>
   cancel <id>            queued: cancelled now; running: the worker stops the exporter (the folder is kept)
   prepare                make the pinned engine ready (mirror, worktree, npm ci, chromium); idempotent
   worker                 run queued jobs, one at a time
-environment: KOMOREBI_RENDER_STATE, KOMOREBI_RENDER_OUT, KOMOREBI_RENDER_MAX_SECONDS, KOMOREBI_RENDER_ALLOW_LOCAL, ARBORETUM_TOKEN`;
+  serve                  the HTTP API and the worker in one process (the deployed mode)
+environment: KOMOREBI_RENDER_STATE, KOMOREBI_RENDER_OUT, KOMOREBI_RENDER_MAX_SECONDS, KOMOREBI_RENDER_ALLOW_LOCAL,
+  KOMOREBI_RENDER_HOST, KOMOREBI_RENDER_PORT, ARBORETUM_TOKEN, KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE`;
 
 const fmtEta = (s) => (s === null || s === undefined ? '' : s >= 3600 ? `${(s / 3600).toFixed(1)}h` : `${Math.ceil(s / 60)}m`);
 
@@ -59,6 +62,13 @@ export async function main(argv, env = process.env, io = { out: (s) => console.l
         const worker = createWorker({ store: open(), config, prepare: async () => prepare({ config, pin }) });
         for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => worker.stop());
         await worker.run();
+        return 0;
+      }
+      case 'serve': {
+        const pin = loadPin();
+        const svc = await serve({ store: open(), config, pin, prepare: async () => prepare({ config, pin }) });
+        for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => svc.stop());
+        await svc.finished;
         return 0;
       }
       default:

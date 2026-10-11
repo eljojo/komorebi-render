@@ -11,7 +11,7 @@
       # Only what the server and its tests need: a stray file in the checkout must not change the package's hash.
       source = pkgs: pkgs.lib.fileset.toSource {
         root = ./.;
-        fileset = pkgs.lib.fileset.unions [ ./src ./scripts ./test ./fixtures ./komorebi.json ./package.json ];
+        fileset = pkgs.lib.fileset.unions [ ./src ./scripts ./test ./fixtures ./komorebi.json ./package.json ./llms.txt ];
       };
     in {
       # `nix develop -c node --test` — node 22 (node:sqlite works without a flag from 22.13, with an ExperimentalWarning
@@ -34,7 +34,7 @@
           installPhase = ''
             runHook preInstall
             mkdir -p $out/lib/komorebi-render $out/bin
-            cp -r src scripts komorebi.json package.json $out/lib/komorebi-render/
+            cp -r src scripts komorebi.json package.json llms.txt $out/lib/komorebi-render/
             makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/komorebi-render \
               --add-flags "--disable-warning=ExperimentalWarning $out/lib/komorebi-render/src/cli.js" \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs_22 pkgs.ffmpeg pkgs.git ]}
@@ -51,6 +51,13 @@
 
       # The tests are pure: a fake exporter stands in for render-video, there is no network and no GPU.
       checks = forAll (pkgs: {
+        darwin-module = import ./nix/module-test.nix { inherit pkgs self; lib = pkgs.lib; };
+        package = pkgs.runCommand "komorebi-render-package" {} ''
+          cmp ${./llms.txt} ${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/lib/komorebi-render/llms.txt
+          ${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/komorebi-render
+          echo "package: llms.txt installed and CLI wrapper runs"
+          touch $out
+        '';
         tests = pkgs.runCommand "komorebi-render-tests" { nativeBuildInputs = [ pkgs.nodejs_22 pkgs.git ]; } ''
           cp -r ${source pkgs} work
           chmod -R u+w work
@@ -61,8 +68,7 @@
         '';
       });
 
-      # darwinModules.default — brief 4: the nix-darwin service (launchd agent running `komorebi-render worker`, with
-      # KOMOREBI_RENDER_OUT=/Volumes/home/komorebi/jobs and ARBORETUM_TOKEN from the service's own environment).
-      # Add it here as `darwinModules.default = import ./nix/darwin-module.nix self;`.
+      # The logged-in session owns the GPU and keychain; the module runs the API and worker together as a user agent.
+      darwinModules.default = import ./nix/darwin-module.nix self;
     };
 }

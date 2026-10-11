@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { LOOK_FILE, exporterArgs, exporterCommand, progress, readResult, tailLines } from './exporter.js';
 import { checkOutputRoot } from './netmount.js';
 import { childEnv } from './engine.js';
+import { scrubSecrets } from './spec.js';
 
 const defaultIsOurs = (pid) => {
   const r = spawnSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
@@ -24,12 +25,7 @@ export function createWorker({
   let stopping = false, preparing = null, current = null;
 
   // The token may sit in the exporter's output; it must not reach the database or a log line.
-  const scrub = (text, spec) => {
-    let t = String(text);
-    const share = spec.preset?.split(':')[1];
-    for (const secret of [config.token, share]) if (secret) t = t.split(secret).join('***');
-    return t;
-  };
+  const scrub = (text, spec) => scrubSecrets(text, spec, config.token);
 
   const ensurePrepared = () => {
     if (!preparing) preparing = Promise.resolve().then(prepare).catch((e) => { preparing = null; throw e; });
