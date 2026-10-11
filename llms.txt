@@ -1,6 +1,6 @@
 # komorebi-render API
 
-komorebi-render queues videos of sunlight through leaves and runs komorebi's pinned WebGL2 exporter on the Mac mini's GPU.
+komorebi-render queues PNG stills and videos of sunlight through leaves and runs komorebi's pinned WebGL2 exporter on the Mac mini's GPU.
 There is one worker, so jobs queue. The API and worker run together with `komorebi-render serve`.
 The default address is http://<mini's tailnet name or IP>:8077; KOMOREBI_RENDER_HOST defaults to 0.0.0.0.
 There is no authentication yet. Use the LAN or tailnet; authentication must precede Cloudflare exposure.
@@ -8,17 +8,18 @@ Responses are JSON except GET /llms.txt. Examples below use `base=http://jojo-m4
 
 ## Job spec
 
-POST the spec itself, without a wrapper. Exactly one of `preset` or `look` is required; `size` and `seconds` are required.
+POST the spec itself, without a wrapper. Exactly one of `preset` or `look` and `size` are required; `seconds` is required only for video.
 Unknown top-level fields are refused. Defaults apply to omitted optional fields.
 
 | Field | Limits and default |
 | --- | --- |
+| `format` | mp4 (default) or png. PNG renders one lossless RGB frame. Omit video-only seconds, fps, master, pipeline and delivery on PNG jobs; they are refused. |
 | `preset` | String `<positive id>[@positive version][:share]`, such as `3`, `3@2` or `3:share`. Without a version, the exporter pins the head on first run. A share token opens an unlisted preset and is redacted in responses. Private presets need the worker's ARBORETUM_TOKEN or KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE. |
 | `look` | Object with `look.params` and optional `look.name`; exactly one of preset or look. |
 | `look.params` | An object of editor params, as saved by komorebi. Required for a look job. |
 | `look.name` | Optional string; unnamed looks are called `look`. |
-| `size` | `1080p`, `4k`, or even `WxH` from 64x64 through 7680x4320. Aliases normalize to 1920x1080 and 3840x2160. No default. |
-| `seconds` | Whole number, 1 to KOMOREBI_RENDER_MAX_SECONDS (default maximum 21600 = 6 hours). No default. |
+| `size` | `1080p`, `4k`, or `WxH` from 64x64 through 7680x4320 (even dimensions for video). Aliases normalize to 1920x1080 and 3840x2160. No default. |
+| `seconds` | Video only: whole number, 1 to KOMOREBI_RENDER_MAX_SECONDS (default maximum 21600 = 6 hours). No default. |
 | `fps` | 30 or 60; default 60. |
 | `master` | Boolean, default false. True keeps lossless segments on pipeline master; false deletes them only after delivery verification. Direct pipelines refuse true. |
 | `quality` | `authored` (default), `max`, or an object of the four fields below. An empty object is authored. |
@@ -35,6 +36,33 @@ Only quality keys become --set or --ss; the look stays as authored. Max means te
 sample_count 48 and ss 2 at 1080p or smaller (ss 1 above 1080p). Max costs about 300 ms/frame on the M4; authored costs
 about 15 ms/frame at 1080p or 37 ms/frame at 4K. Max at 1080p is about 20 times authored. One hour of max at 60 fps can
 take about 18 hours to render; such jobs are normal and are not refused because of cost.
+
+## PNG thumbnails and fallbacks
+
+```json spec
+{"look":{"name":"Thumbnail","params":{"wind_strength":1.3}},"format":"png","size":"512x512","quality":"max"}
+```
+```json spec
+{"preset":"28@2","format":"png","size":"512x512","quality":{"sample_count":48,"ss":1}}
+```
+```sh
+curl -sS "$base/jobs" -H 'Content-Type: application/json' \
+  -d '{"preset":"28@2","format":"png","size":"512x512","quality":"max"}'
+```
+
+PNG renders frame 0 after the same standard 30-second pre-roll as video. Only one frame is rendered, using the pinned
+exporter and existing quality settings, with optional linear supersampling. The image is extracted from the lossless RGB
+master with no MP4 encoding or chroma subsampling. Output is eight-bit RGB in delivery.png (MIME type image/png).
+Before success, the worker decodes it, verifies one frame at the requested dimensions and records byte size and SHA256.
+It then discards the temporary lossless segment, preserving checkpoints and provenance. Interrupted jobs recover through
+the same queue/worker machinery; already-published PNGs can be verified again without losing their provenance.
+
+GET /jobs and GET /jobs/:id identify format png, null seconds/fps/pipeline/eta_s/eta_basis, and progress 0/1 then 1/1.
+A done PNG's delivery object contains path, size_mib, null mbit_s, mime_type image/png, width, height and sha256.
+The manifest adds an image record with file delivery.png, frame_index 0, dimensions, bytes and sha256; original engine,
+preset version, quality overrides and render clock remain. These support Arboretum's eventual thumbnail/fallback caching.
+The API returns NAS paths, not image bytes. Low-resolution 15-second thumbnail clips are ordinary MP4 jobs.
+Omit seconds, fps, master, pipeline and delivery on PNG specs: these video-only options return 422 with their field name.
 
 ## Pipeline choices
 
@@ -103,7 +131,7 @@ curl -sS "$base/jobs" -H 'Content-Type: application/json' -d '{"preset":"3@2","s
 {"id":1,"state":"queued","folder":"/Volumes/home/komorebi/jobs/2026-10-10-1-preset-3"}
 ```
 
-GET /jobs — newest first, wrapped in `jobs`; each summary has id, state, name (preset or look), size, seconds, fps,
+GET /jobs — newest first, wrapped in `jobs`; each summary has id, state, name (preset or look), size, format (mp4 or png), seconds, fps,
 resolved quality, effective pipeline, progress, eta_s, eta_basis, blocked and timestamps.
 ```sh
 curl -sS "$base/jobs"

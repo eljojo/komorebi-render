@@ -3,7 +3,7 @@
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { LOOK_FILE, exporterArgs, exporterCommand, progress, readResult, tailLines } from './exporter.js';
+import { LOOK_FILE, exporterArgs, exporterCommand, finalizeImage, progress, readResult, tailLines } from './exporter.js';
 import { createOutputRootCheck } from './netmount.js';
 import { childEnv } from './engine.js';
 import { scrubSecrets } from './spec.js';
@@ -54,10 +54,11 @@ export function createWorker({
     try { engine = await ensurePrepared(); } catch (e) { return block(job, `engine not ready: ${scrub(e.message, job.spec)}`); }
 
     const { id, spec } = job;
+    const seconds = spec.format === 'png' ? 1 / 60 : spec.seconds;
     const folder = join(config.out, job.folder_name);
     mkdirSync(folder, { recursive: true });
     if (spec.look) writeFileSync(join(folder, LOOK_FILE), JSON.stringify({ ...(spec.look.name ? { name: spec.look.name } : {}), params: spec.look.params }));
-    const base = progress(folder, spec.seconds).done;   // segments already on disk: a resume continues after them
+    const base = progress(folder, seconds).done;   // segments already on disk: a resume continues after them
     if (!store.start(id, { folder, base })) return { job, outcome: 'skipped' };
 
     const { cmd, args } = exporterCommand({ node, args: exporterArgs({ script: engine.script, commit: engine.commit, folder, spec }), caffeinate });
@@ -72,9 +73,9 @@ export function createWorker({
       child.on('error', (error) => resolve({ error }));
       child.on('close', (code, signal) => resolve({ code, signal }));
       if (child.pid) store.setPid(id, child.pid);
-      log(`job ${id} started: ${spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.seconds}s @${spec.fps} (${job.quality.name} quality)`);
+      log(`job ${id} started: ${spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.format === 'png' ? 'PNG' : `${spec.seconds}s @${spec.fps}`} (${job.quality.name} quality)`);
       const tick = () => {
-        const p = progress(folder, spec.seconds);
+        const p = progress(folder, seconds);
         store.progress(id, { done: p.done, total: p.total, line: p.lastLine === null ? null : scrub(p.lastLine, spec) });
         if (!killed && store.get(id).cancel_requested) { killed = true; terminate(child); }
       };
@@ -84,13 +85,19 @@ export function createWorker({
     });
     current = null;
 
-    const p = progress(folder, spec.seconds);
+    const p = progress(folder, seconds);
     store.progress(id, { done: p.done, total: p.total, line: p.lastLine === null ? null : scrub(p.lastLine, spec) });
     const now = store.get(id);
     if (now.cancel_requested) { store.cancelled(id); log(`job ${id} cancelled`); return { job, outcome: 'cancelled' }; }
     if (stopping) { store.release(id); log(`job ${id} put back in the queue; the exporter resumes it`); return { job, outcome: 'released' }; }
     if (!exit.error && exit.code === 0) {
-      try { store.finish(id, readResult(folder)); log(`job ${id} done`); return { job, outcome: 'done' }; } catch (e) { exit.error = e; }
+      try {
+        const result = spec.format === 'png' ? await finalizeImage(folder, spec) : readResult(folder);
+        const latest = store.get(id);
+        if (latest.cancel_requested) { store.cancelled(id); return { job, outcome: 'cancelled' }; }
+        if (stopping) { store.release(id); return { job, outcome: 'released' }; }
+        store.finish(id, result); log(`job ${id} done`); return { job, outcome: 'done' };
+      } catch (e) { exit.error = e; }
     }
     const why = exit.error ? exit.error.message : exit.signal ? `killed by ${exit.signal}` : `exit code ${exit.code}`;
     const detail = tailLines(join(folder, 'run.log')) || stderr.trim();

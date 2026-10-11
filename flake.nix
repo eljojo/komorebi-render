@@ -58,7 +58,7 @@
           echo "package: llms.txt installed and CLI wrapper runs"
           touch $out
         '';
-        tests = pkgs.runCommand "komorebi-render-tests" { nativeBuildInputs = [ pkgs.nodejs_22 pkgs.git ]; } ''
+        tests = pkgs.runCommand "komorebi-render-tests" { nativeBuildInputs = [ pkgs.nodejs_22 pkgs.git pkgs.ffmpeg ]; } ''
           cp -r ${source pkgs} work
           chmod -R u+w work
           cd work

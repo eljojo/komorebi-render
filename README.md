@@ -1,7 +1,7 @@
 # komorebi-render
 
-A render server for [komorebi](https://github.com/eljojo/komorebi): send a job (a look, a size, a length) and get a 1080p or
-4K video, rendered frame by frame on the Mac mini's GPU and written to the NAS.
+A render server for [komorebi](https://github.com/eljojo/komorebi): send a look and a size for a PNG still, or add a length
+for a video. Outputs are rendered on the Mac mini's GPU and written to the NAS.
 
 It does not render anything itself. It runs komorebi's own video exporter (`test-gl/render-video.mjs`) from a **pinned
 komorebi commit** (`komorebi.json`), so there is one definition of a render. What it adds is a queue, a worker, progress,
@@ -50,10 +50,11 @@ komorebi-render serve                  run the HTTP API and one worker together
 
 | field | |
 |---|---|
+| `format` | `"mp4"` (default) or `"png"`. PNG renders one lossless RGB frame; omit the video-only seconds, fps, master, pipeline and delivery fields. |
 | `preset` | `"<arboretum id>[@version][:share]"`. Exactly one of `preset` or `look`. Without `@version` the head is pinned at the first run. A private preset needs `ARBORETUM_TOKEN` in the worker's environment; `:share` opens an unlisted one. |
 | `look` | `{ "name"?: string, "params": {…} }`: the look's params, as the editor saves them. |
-| `size` | `"1080p"`, `"4k"` or `"WxH"` (even, 64x64 to 7680x4320). |
-| `seconds` | whole number, 1 to `KOMOREBI_RENDER_MAX_SECONDS` (default 21600). |
+| `size` | `"1080p"`, `"4k"` or `"WxH"` (64x64 to 7680x4320; video requires even dimensions). |
+| `seconds` | Video only: whole number, 1 to `KOMOREBI_RENDER_MAX_SECONDS` (default 21600). |
 | `fps` | `30` or `60` (default 60). |
 | `master` | `false` (default): the lossless segments are deleted once the delivery is verified. `true` keeps them. |
 | `quality` | `"authored"` (default: the look as saved), `"max"`, or an object (below). |
@@ -68,6 +69,37 @@ exporter (as `--set` and `--ss`), so its manifest still says the look is as auth
 **ETA.** Measured on the mini, authored is about 15 ms/frame at 1080p and 37 at 4K; max is about 300 at either size. A one-hour
 max-quality job at 60 fps is about 18 hours: `status` says so as an ETA and the job is never refused. Once segments finish,
 the ETA is measured from this run's own rate.
+
+## PNG stills for Arboretum thumbnails and fallbacks
+
+Use the same API or CLI and the same preset JSON, resolution and quality knobs:
+
+```json
+{"look":{"name":"Thumbnail","params":{"wind_strength":1.3}},"format":"png","size":"512x512","quality":"max"}
+```
+
+An Arboretum preset can be referenced directly instead:
+
+```sh
+curl -sS http://jojo-m4-mini:8077/jobs -H 'Content-Type: application/json' \
+  --data '{"preset":"28@2","format":"png","size":"512x512","quality":"max"}'
+```
+
+PNG captures frame 0 after the exporter's standard 30-second pre-roll. It renders **one frame**, extracts RGB from the
+lossless master, and encodes no MP4. Supersampling follows the existing quality settings: max uses ss 2 at 1080p or smaller;
+an explicit quality object with ss 1 renders at the requested size directly. PNG output is eight-bit RGB, with no video
+chroma subsampling or lossy video encoding.
+
+The result is `delivery.png`, alongside `manifest.json`, `run.log` and render provenance. Before reporting success the
+worker decodes the PNG, verifies one frame at the requested dimensions, and records its SHA256 and byte size. It then
+removes the temporary lossless segment; checkpoint and provenance files remain. Interrupted jobs use the same recovery
+mechanism as videos, including recovery after the PNG has been published but before the database marks the job done.
+
+Poll the existing job routes. Summaries identify format png, one unit of progress (0/1 then 1/1), and null seconds, fps,
+pipeline and ETA. Detail's delivery contains path, size_mib, null mbit_s, mime_type `image/png`, width, height and sha256.
+Files live on the NAS; the API returns their paths. Omit seconds, fps, master, pipeline and delivery for PNG: these are
+video-only fields and are refused on image jobs. Arboretum integration can use the recorded preset version, engine commit,
+quality and image hash for caching. Low-resolution 15-second thumbnail clips already use normal MP4 jobs.
 
 ## Choosing the render pipeline
 
@@ -116,7 +148,7 @@ the existing quality-based estimates and applies no speculative pipeline speed m
 | | |
 |---|---|
 | `$KOMOREBI_RENDER_STATE` (default `~/.local/state/komorebi-render`) | `jobs.sqlite`, `komorebi.git` (mirror), `engine/<sha>/` (the pinned worktree), `browsers/` (Playwright's Chromium) |
-| `$KOMOREBI_RENDER_OUT/<yyyy-mm-dd>-<id>-<slug>/` | one folder per job: `delivery.mp4`, `manifest.json`, `run.log`, `seg/` (kept as the master only with `master: true`), `look-input.json` for a `look` job |
+| `$KOMOREBI_RENDER_OUT/<yyyy-mm-dd>-<id>-<slug>/` | one folder per job: `delivery.mp4` or `delivery.png`, `manifest.json`, `run.log`, `seg/` (kept as the master only with `master: true` on video), `look-input.json` for a `look` job |
 
 Before taking a job the worker checks that the output root exists, is writable and is on `smbfs`, `nfs` or `afpfs` (read from `mount`).
 If not, the job **stays queued** with the reason in `blocked` (so a NAS that comes back lets it run) and nothing is written.

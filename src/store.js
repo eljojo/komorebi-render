@@ -59,7 +59,7 @@ export function openStore(path, { now = () => new Date().toISOString() } = {}) {
       db.exec('BEGIN IMMEDIATE');
       try {
         const { lastInsertRowid } = db.prepare('INSERT INTO jobs (state, spec, quality, created_at, seg_total) VALUES (?, ?, ?, ?, ?)')
-          .run('queued', JSON.stringify(spec), JSON.stringify(resolveQuality(spec)), at, Math.ceil(spec.seconds / SEGMENT_SECONDS));
+          .run('queued', JSON.stringify(spec), JSON.stringify(resolveQuality(spec)), at, spec.format === 'png' ? 1 : Math.ceil(spec.seconds / SEGMENT_SECONDS));
         const id = Number(lastInsertRowid);
         db.prepare('UPDATE jobs SET folder_name = ? WHERE id = ?').run(folderName({ id, createdAt: at, spec }), id);
         db.exec('COMMIT');

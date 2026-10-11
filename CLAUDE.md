@@ -10,9 +10,9 @@ before you change how it is called.
 - **`komorebi.json`** — the pinned komorebi commit (full sha) and its repo URL. Bumped by `scripts/pin.mjs`.
 - **`src/cli.js`** — the commands: submit, list, status, cancel, prepare, worker, serve. Thin: it calls the modules below.
 - **`src/config.js`** — `loadConfig(env)`: every path and limit the environment decides, ARBORETUM_TOKEN (or its runtime token file), `maxSeconds`, `host`, `port`. `loadPin()` reads `komorebi.json`.
-- **`src/spec.js`** — the job spec: validation into the canonical shape (`validateSpec`, `SpecError`), four pipelines and their master/delivery restrictions, the folder name, the share-token redaction. Older specs keep an omitted pipeline.
+- **`src/spec.js`** — the job spec: validation into the canonical shape (`validateSpec`, `SpecError`), PNG or default MP4, four video pipelines and their master/delivery restrictions, the folder name, the share-token redaction. PNG refuses video-only fields; older video specs keep omitted format/pipeline.
 - **`src/quality.js`** — the quality knobs (`checkQuality`, `resolveQuality`) and their cost (`msPerFrame`, `estimateSeconds`). The only place that names the keys that may become `--set`.
-- **`src/exporter.js`** — the seam to render-video.mjs: argv from a spec, the caffeinate wrapper, progress from `seg/*.json`, the bounded `run.log` tail, the ETA from a run's own rate, the result from `manifest.json`.
+- **`src/exporter.js`** — the seam to render-video.mjs: argv from a spec, the caffeinate wrapper, progress from `seg/*.json`, the bounded `run.log` tail, the ETA from a run's own rate, the result from `manifest.json`. PNG uses one frame and the exporter's master still; `finalizeImage` decodes and checks dimensions, publishes delivery.png with SHA256/provenance, then discards the temporary master with recovery markers.
 - **`src/store.js`** — `jobs.sqlite` over `node:sqlite`: the job table and its guarded state machine (queued, running, done, failed, cancelled), cancel requests, requeue at start.
 - **`src/netmount.js`** — the async output-root check: exists, writable (a real write), on a network mount (`mount` output, injectable); `createOutputRootCheck` bounds callers to five seconds while retaining one stuck probe until it settles.
 - **`src/engine.js`** — `prepare` (mirror, pinned worktree, `npm ci`, Chromium) and `resolveCommit`, over an injectable runner. The worktree is what makes the exporter's `--commit` (`git -C <its repo> archive`) work.
@@ -25,6 +25,7 @@ before you change how it is called.
 - **`nix/module-test.nix`** — evaluates the module with stub launchd/activation options and checks disabled behavior, defaults, overrides, arguments, environment and logs.
 - **`scripts/pin.mjs`** — bumps `komorebi.json`.
 - **`test/*.test.js`** — `node --test`; no GPU, no network, no real git/npm. `fixtures/fake-exporter.mjs` stands in for render-video (seg/*.json, run.log, manifest.json, exit code from `FAKE_MODE`).
+- **`test/stills.test.js`** — PNG spec/argv, API-to-worker results, decoded image dimensions and corruption, recovery after publication, cancellation/redaction, CLI and guide coverage. FFmpeg makes and decodes tiny CPU-only PNG fixtures.
 
 ## Rules that bite
 

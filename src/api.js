@@ -24,7 +24,7 @@ function summary(job, now, token) {
   const v = jobView(job, now);
   return {
     id: job.id, state: job.state, name: nameOf(job.spec),
-    size: job.spec.size, seconds: job.spec.seconds, fps: job.spec.fps, quality: job.quality, pipeline: v.pipeline,
+    size: job.spec.size, format: v.format, seconds: job.spec.seconds ?? null, fps: job.spec.fps ?? null, quality: job.quality, pipeline: v.pipeline,
     progress: v.progress, eta_s: v.eta?.seconds ?? null, eta_basis: v.eta?.basis ?? null,
     blocked: job.blocked === null ? null : scrubSecrets(job.blocked, job.spec, token), created_at: job.created_at, started_at: job.started_at, finished_at: job.finished_at,
   };
@@ -65,7 +65,8 @@ function detail({ store, config, now }, { id }) {
     ...summary(job, now(), config.token),
     spec: jobView(job).spec,
     folder,
-    delivery: r ? { path: r.delivery, size_mib: r.size_mib, mbit_s: r.mbit_s } : null,
+    delivery: r ? { path: r.delivery, size_mib: r.size_mib, mbit_s: r.mbit_s,
+      ...(job.spec.format === 'png' ? { mime_type: r.mime_type, width: r.width, height: r.height, sha256: r.sha256 } : {}) } : null,
     error: scrub(job.error), last_line: scrub(job.last_line),
     log_tail: started && existsSync(join(job.folder, 'run.log')) ? scrub(tailLines(join(job.folder, 'run.log'))).split('\n').filter(Boolean) : [],
     quality_vs_master: manifest?.quality_vs_master ?? null,
