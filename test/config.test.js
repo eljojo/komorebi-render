@@ -2,8 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
 import { loadConfig, loadPin } from '../src/config.js';
+import { exporterArgs } from '../src/exporter.js';
+
+test('relative paths keep the worker and exporter on the same output root', () => {
+  const c = loadConfig({ KOMOREBI_RENDER_STATE: 'state', KOMOREBI_RENDER_OUT: 'nas/jobs' }, '/h');
+  const script = join(c.engineDir('sha'), 'test-gl', 'render-video.mjs');
+  const folder = join(c.out, 'job');
+  const args = exporterArgs({ script, commit: 'sha', folder, spec: { preset: '3', size: '64x64', seconds: 1, fps: 60 } });
+  assert.equal(resolve(dirname(script), args[args.indexOf('--out') + 1]), resolve(folder));
+  assert.equal(c.state, resolve('state'));
+});
 
 test('defaults: state under the home, no output root, 6 h maximum, listen on 0.0.0.0', () => {
   const c = loadConfig({}, '/home/u');
