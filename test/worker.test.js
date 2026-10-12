@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +9,7 @@ import { createWorker } from '../src/worker.js';
 import { openStore } from '../src/store.js';
 import { loadConfig } from '../src/config.js';
 import { validateSpec } from '../src/spec.js';
+import { createOutputAccess } from '../src/netmount.js';
 
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'fake-exporter.mjs');
 const SHA = 'a6b6fa25a98d47fa8ae312b4bfae4c9fde99f849';
@@ -20,11 +22,12 @@ const rig = (over = {}) => {
   const prepared = { n: 0 };
   const worker = createWorker({
     store, config, log: (l) => lines.push(l),
-    prepare: async () => { prepared.n++; if (over.prepareFails) throw new Error('no network'); return { script: FAKE, commit: SHA }; },
+    prepare: over.prepare ?? (async () => { prepared.n++; if (over.prepareFails) throw new Error('no network'); return { script: FAKE, commit: SHA }; }),
     checkOut: over.checkOut ?? (() => ({ ok: true, fstype: 'test' })),
     caffeinate: false, pollMs: 10, progressMs: 15, graceMs: 50, extraEnv: over.extraEnv ?? {},
     isOurs: over.isOurs, kill: over.kill,
     spawn: over.spawn,
+    outputAccess: over.outputAccess,
   });
   return { out, config, store, worker, lines, prepared };
 };
@@ -60,6 +63,118 @@ test('an unversioned preset resumes its recorded version with its share credenti
   const { argv } = argvOf(folder);
   assert.equal(argv[argv.indexOf('--arboretum') + 1], '3@2:share-secret');
   assert.equal(store.get(job.id).spec.preset, '3:share-secret');
+});
+
+test('stop aborts preparation and leaves the job queued', async () => {
+  let entered, aborted = false;
+  const started = new Promise(resolve => { entered = resolve; });
+  let finish;
+  const { store, worker } = rig({ prepare: (options) => new Promise((resolve, reject) => {
+    finish = resolve;
+    options?.signal.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); });
+    entered();
+  }) });
+  const job = submit(store, {});
+  const running = worker.runOnce();
+  await started;
+  await worker.stop();
+  const didAbort = aborted;
+  finish({ script: FAKE, commit: SHA });
+  await running;
+  assert.equal(didAbort, true);
+  assert.equal(store.get(job.id).state, 'queued');
+});
+
+test('recovery retains ownership until a stubborn exporter is killed', async () => {
+  let alive = true;
+  const signals = [], states = [];
+  const { store, worker } = rig({ isOurs: () => alive, kill: (pid, signal) => {
+    signals.push(signal); states.push([store.get(1).state, store.get(1).pid]);
+    if (signal === 'SIGKILL') alive = false;
+  } });
+  const job = submit(store, {});
+  store.start(job.id, { folder: '/fake' }); store.setPid(job.id, 42);
+  await worker.recover();
+  assert.equal(alive, false);
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  assert.deepEqual(states, [['running', 42], ['running', 42]]);
+  assert.equal(store.get(job.id).state, 'queued');
+});
+
+test('recovery refuses to release an exporter that survives both signals', async () => {
+  const { store, worker } = rig({ isOurs: () => true, kill: () => {} });
+  const job = submit(store, {});
+  store.start(job.id, { folder: '/fake' }); store.setPid(job.id, 42);
+  await assert.rejects(worker.recover(), /still running/);
+  assert.equal(store.get(job.id).state, 'running');
+  assert.equal(store.get(job.id).pid, 42);
+});
+
+for (const action of ['cancel', 'stop']) test(`${action} escalates when an exporter ignores SIGTERM`, async () => {
+  let child, timer;
+  const signals = [];
+  const { store, worker } = rig({
+    spawn: () => { child = new EventEmitter(); child.stderr = new EventEmitter(); child.pid = 4242; return child; },
+    kill: (_pid, signal) => { signals.push(signal); if (signal === 'SIGKILL') setImmediate(() => child.emit('close', null, signal)); },
+  });
+  const job = submit(store, {});
+  const running = worker.runOnce();
+  try {
+    await until(() => child);
+    if (action === 'cancel') store.requestCancel(job.id); else await worker.stop();
+    const result = await Promise.race([running, new Promise(resolve => { timer = setTimeout(() => resolve({ outcome: 'timed out' }), 250); })]);
+    assert.equal(result.outcome, action === 'cancel' ? 'cancelled' : 'released');
+    assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+  } finally {
+    clearTimeout(timer);
+    child?.emit('close', null, 'SIGKILL');
+    await running;
+  }
+});
+
+test('SIGKILL stops a real exporter process group that ignores SIGTERM', async () => {
+  const { store, worker } = rig({ extraEnv: { FAKE_MODE: 'stubborn' } });
+  const job = submit(store, {});
+  const running = worker.runOnce();
+  try {
+    await until(() => store.get(job.id).seg_done >= 1);
+    const pid = store.get(job.id).pid;
+    store.requestCancel(job.id);
+    assert.equal((await running).outcome, 'cancelled');
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  } finally { await worker.stop(); await running; }
+});
+
+test('cancel remains responsive when a NAS progress read is stalled', async () => {
+  let entered, release;
+  const reading = new Promise(resolve => { entered = resolve; });
+  const stalled = new Promise(resolve => { release = resolve; });
+  const access = createOutputAccess({ timeoutMs: 15 });
+  const { store, worker } = rig({ extraEnv: { FAKE_MODE: 'hang' }, outputAccess: (key, operation) =>
+    access(key, key.startsWith('progress:') ? () => { entered(); return stalled; } : operation) });
+  const job = submit(store, {});
+  const running = worker.runOnce();
+  try {
+    await reading;
+    store.requestCancel(job.id);
+    assert.equal((await running).outcome, 'cancelled');
+  } finally { release({ done: 1, total: 3, lastLine: null }); await worker.stop(); await running; }
+});
+
+test('an exporter that survives SIGKILL retains its running state and PID', async () => {
+  let child;
+  const { store, worker } = rig({
+    spawn: () => { child = new EventEmitter(); child.stderr = new EventEmitter(); child.pid = 4242; return child; },
+    kill: () => {},
+  });
+  const job = submit(store, {});
+  const running = worker.runOnce();
+  const rejected = assert.rejects(running, /still running/);
+  await until(() => child);
+  store.requestCancel(job.id);
+  await rejected;
+  assert.equal(store.get(job.id).state, 'running');
+  assert.equal(store.get(job.id).pid, 4242);
 });
 
 test('a job runs to done: folder, argv, progress, and the delivery from the manifest', async () => {
@@ -169,7 +284,8 @@ test('no queued job: runOnce does nothing', async () => {
 
 test('start-up recovery: a job left running is queued again, and a still-living exporter of it is stopped first', async () => {
   const killed = [];
-  const { store, worker } = rig({ isOurs: (pid) => pid === 4242, kill: (pid, sig) => killed.push([pid, sig]) });
+  let alive = true;
+  const { store, worker } = rig({ isOurs: (pid) => pid === 4242 && alive, kill: (pid, sig) => { killed.push([pid, sig]); alive = false; } });
   const a = submit(store, {}), b = submit(store, {});
   store.start(a.id, { folder: '/f', base: 0 }); store.setPid(a.id, 4242);
   store.start(b.id, { folder: '/g', base: 0 }); store.setPid(b.id, 999);   // pid reused by something else

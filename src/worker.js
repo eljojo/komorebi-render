@@ -41,8 +41,8 @@ export function createWorker({
   };
 
   // The exporter runs under caffeinate in its own process group: SIGTERM to the group reaches caffeinate and node together.
-  const terminate = (child) => {
-    try { kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* already gone */ } }
+  const terminate = (child, signal = 'SIGTERM') => {
+    try { kill(-child.pid, signal); } catch { try { child.kill(signal); } catch { /* already gone */ } }
   };
 
   async function runOnce() {
@@ -88,30 +88,45 @@ export function createWorker({
     const { cmd, args } = exporterCommand({ node, args: exporterArgs({ script: engine.script, commit: engine.commit, folder, spec: runSpec }), caffeinate });
     const env = { ...childEnv(config), ...(config.token ? { ARBORETUM_TOKEN: config.token } : {}), ...extraEnv };
     let stderr = '';
-    const exit = await new Promise((resolve) => {
-      let child, killed = false;
+    const exit = await new Promise((resolve, reject) => {
+      let child, killed = false, escalation, deadline;
       try { child = spawn(cmd, args, { cwd: dirname(engine.script), env, detached: true, stdio: ['ignore', 'ignore', 'pipe'] }); } catch (e) { resolve({ error: e }); return; }
-      current = { child, terminate: () => { killed = true; terminate(child); } };
-      if (stopping) current.terminate();   // stop() came in between the queue and the spawn
+      const requestTermination = () => {
+        if (killed || closed) return;
+        killed = true;
+        terminate(child);
+        if (closed) return;
+        escalation = setTimeout(() => {
+          terminate(child, 'SIGKILL');
+          if (!closed) deadline = setTimeout(() => {
+            clear();
+            child.unref?.(); child.stderr.destroy?.();
+            reject(new Error(`exporter ${child.pid} is still running after SIGKILL`));
+          }, graceMs);
+        }, graceMs);
+      };
+      let closed = false, polling = false;
+      const clear = () => { closed = true; clearInterval(timer); clearTimeout(escalation); clearTimeout(deadline); };
+      const timer = setInterval(() => tick(), progressMs);
+      current = { child, terminate: requestTermination };
       child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4096); });
-      child.on('error', (error) => resolve({ error }));
-      child.on('close', (code, signal) => resolve({ code, signal }));
+      child.on('error', (error) => {
+        if (child.pid) { requestTermination(); return; }
+        clear(); resolve({ error });
+      });
+      child.on('close', (code, signal) => { clear(); resolve({ code, signal }); });
       if (child.pid) store.setPid(id, child.pid);
       log(`job ${id} started: ${spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.format === 'png' ? 'PNG' : `${spec.seconds}s @${spec.fps}`} (${job.quality.name} quality)`);
-      let closed = false, polling = false;
       const tick = () => {
         if (closed) return;
-        if (!killed && store.get(id).cancel_requested) { killed = true; terminate(child); }
+        if (!killed && store.get(id).cancel_requested) requestTermination();
         if (polling) return;
         polling = true;
         outputAccess(`progress:${folder}`, () => progress(folder, seconds)).then(p => {
           if (!closed) store.progress(id, { done: p.done, total: p.total, line: p.lastLine === null ? null : scrub(p.lastLine, spec) });
         }).catch(() => {}).finally(() => { polling = false; });
       };
-      const timer = setInterval(tick, progressMs);
-      const clear = () => { closed = true; clearInterval(timer); };
-      child.on('close', clear);
-      child.on('error', clear);
+      if (stopping) current.terminate();   // stop() came in between the queue and the spawn
     });
     current = null;
 
@@ -133,6 +148,8 @@ export function createWorker({
     }
     const why = exit.error ? exit.error.message : exit.signal ? `killed by ${exit.signal}` : `exit code ${exit.code}`;
     const detail = await outputAccess(`log:${folder}`, () => tailLines(join(folder, 'run.log'))).catch(() => '') || stderr.trim();
+    if (store.get(id).cancel_requested) { store.cancelled(id); return { job, outcome: 'cancelled' }; }
+    if (stopping) { store.release(id); return { job, outcome: 'released' }; }
     store.fail(id, scrub(`${why}${detail ? `\n${detail}` : ''}`, spec));
     log(`job ${id} failed: ${scrub(why, spec)}`);
     return { job, outcome: 'failed' };
@@ -141,14 +158,23 @@ export function createWorker({
   // Start-up: what was running is queued again (the exporter resumes it); an exporter that outlived the last worker is stopped first,
   // or two would write one folder.
   async function recover() {
-    const rows = store.requeueRunning();
+    const rows = store.list({ state: 'running' }).sort((a, b) => a.id - b.id);
     for (const j of rows) {
       if (!j.pid || !isOurs(j.pid)) continue;
       try { kill(-j.pid, 'SIGTERM'); } catch { /* gone between the check and the kill */ }
-      const until = Date.now() + graceMs;
-      while (isOurs(j.pid) && Date.now() < until) await sleep(100);
+      const wait = async () => {
+        const until = Date.now() + graceMs;
+        while (isOurs(j.pid) && Date.now() < until) await sleep(Math.min(100, Math.max(1, until - Date.now())));
+      };
+      await wait();
+      if (isOurs(j.pid)) {
+        try { kill(-j.pid, 'SIGKILL'); } catch { /* confirm whether the exporter is gone below */ }
+        await wait();
+      }
+      if (isOurs(j.pid)) throw new Error(`exporter ${j.pid} is still running after SIGKILL`);
       log(`job ${j.id}: stopped an exporter left running (pid ${j.pid})`);
     }
+    store.requeueRunning();
     if (rows.length) log(`requeued ${rows.length} job(s) left running: ${rows.map((j) => j.id).join(', ')}`);
     return rows;
   }

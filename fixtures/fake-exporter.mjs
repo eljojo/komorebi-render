@@ -1,5 +1,5 @@
 // Stands in for test-gl/render-video.mjs: the same flags in, the same files out (seg/*.json, run.log, manifest.json, delivery.mp4), no render.
-// FAKE_MODE: ok (default) | fail | hang (one segment, then waits to be killed).  FAKE_SEGMENT_MS paces the segments.
+// FAKE_MODE: ok (default) | fail | hang (one segment, then waits to be killed) | stubborn (ignores SIGTERM).  FAKE_SEGMENT_MS paces the segments.
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -9,6 +9,7 @@ const flag = (n) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : u
 const out = flag('--out');
 const seconds = Number(flag('--seconds'));
 const mode = process.env.FAKE_MODE || 'ok';
+if (mode === 'stubborn') process.on('SIGTERM', () => {});
 const pace = Number(process.env.FAKE_SEGMENT_MS || 30);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (m) => appendFileSync(join(out, 'run.log'), `${m}\n`);
@@ -20,7 +21,7 @@ for (let i = 0; i < total; i++) {
   await sleep(pace);
   writeFileSync(join(out, 'seg', `seg_${String(i).padStart(5, '0')}.json`), '{}');
   log(`segment ${i} done`);
-  if (mode === 'hang') await new Promise(() => setInterval(() => {}, 1000));
+  if (mode === 'hang' || mode === 'stubborn') await new Promise(() => setInterval(() => {}, 1000));
   if (mode === 'fail' && i === 0) { log('FAILED: boom'); process.exit(1); }
 }
 if (flag('--delivery') === 'none' && flag('--stills') === '0') {
