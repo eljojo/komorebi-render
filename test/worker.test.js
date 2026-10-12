@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,18 @@ test('failure logs scrub credentials just like the database error', async () => 
   assert.equal(store.get(job.id).error, '*** and ***');
   assert.ok(!lines.join('\n').includes('share-secret'));
   assert.ok(!lines.join('\n').includes('arb-secret'));
+});
+
+test('an unversioned preset resumes its recorded version with its share credential intact', async () => {
+  const { store, worker, out } = rig();
+  const job = submit(store, { preset: '3:share-secret' });
+  const folder = join(out, job.folder_name);
+  mkdirSync(folder);
+  writeFileSync(join(folder, 'run-key.json'), JSON.stringify({ body: { arboretum: { id: 3, version: 2 } } }));
+  assert.equal((await worker.runOnce()).outcome, 'done');
+  const { argv } = argvOf(folder);
+  assert.equal(argv[argv.indexOf('--arboretum') + 1], '3@2:share-secret');
+  assert.equal(store.get(job.id).spec.preset, '3:share-secret');
 });
 
 test('a job runs to done: folder, argv, progress, and the delivery from the manifest', async () => {

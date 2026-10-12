@@ -2,7 +2,7 @@
 // (progress out, cancel in), so a CLI or API in another process drives the same worker.
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { LOOK_FILE, exporterArgs, exporterCommand, finalizeImage, progress, readResult, tailLines } from './exporter.js';
 import { createOutputAccess, createOutputRootCheck } from './netmount.js';
@@ -59,7 +59,7 @@ export function createWorker({
     const { id, spec } = job;
     const seconds = spec.format === 'png' ? 1 / 60 : spec.seconds;
     const folder = join(config.out, job.folder_name);
-    let base;
+    let base, runSpec = spec;
     try {
       base = await outputAccess(`setup:${folder}`, async (signal) => {
         const ready = await check();
@@ -69,13 +69,23 @@ export function createWorker({
         await mkdir(folder, { recursive: true });
         signal.throwIfAborted();
         if (spec.look) await writeFile(join(folder, LOOK_FILE), JSON.stringify({ ...(spec.look.name ? { name: spec.look.name } : {}), params: spec.look.params }), { signal });
+        const preset = /^(\d+)(:.*)?$/.exec(spec.preset ?? '');
+        if (preset) {
+          let key;
+          try { key = JSON.parse(await readFile(join(folder, 'run-key.json'), 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+          if (key) {
+            const pinned = key.body?.arboretum;
+            if (String(pinned?.id) !== preset[1] || !Number.isInteger(pinned.version) || pinned.version < 1) throw new Error('run-key.json does not name this preset and a valid version');
+            runSpec = { ...spec, preset: `${preset[1]}@${pinned.version}${preset[2] ?? ''}` };
+          }
+        }
         return (await progress(folder, seconds)).done;   // segments already on disk: a resume continues after them
       });
     } catch (e) { return block(job, `output root: ${scrub(e.message, spec)}`); }
     if (stopping) return null;
     if (!store.start(id, { folder, base })) return { job, outcome: 'skipped' };
 
-    const { cmd, args } = exporterCommand({ node, args: exporterArgs({ script: engine.script, commit: engine.commit, folder, spec }), caffeinate });
+    const { cmd, args } = exporterCommand({ node, args: exporterArgs({ script: engine.script, commit: engine.commit, folder, spec: runSpec }), caffeinate });
     const env = { ...childEnv(config), ...(config.token ? { ARBORETUM_TOKEN: config.token } : {}), ...extraEnv };
     let stderr = '';
     const exit = await new Promise((resolve) => {
