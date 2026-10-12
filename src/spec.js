@@ -26,7 +26,7 @@ const SIZES = { '1080p': '1920x1080', '4k': '3840x2160' };
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function parseSize(s, image = false) {
-  if (typeof s === 'string' && SIZES[s]) return SIZES[s];
+  if (typeof s === 'string' && Object.hasOwn(SIZES, s)) return SIZES[s];
   const m = typeof s === 'string' ? /^(\d{2,4})x(\d{2,4})$/.exec(s) : null;
   if (!m) return null;
   const [w, h] = [Number(m[1]), Number(m[2])];

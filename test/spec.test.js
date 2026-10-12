@@ -5,6 +5,12 @@ import { validateSpec, SpecError, folderName, slugify, redactSpec, scrubSecrets,
 const ok = (raw) => validateSpec(raw);
 const bad = (raw, re) => assert.throws(() => validateSpec(raw), (e) => e instanceof SpecError && re.test(e.message));
 
+test('inherited object properties are not size aliases', () => {
+  for (const size of ['toString', 'constructor', '__proto__']) {
+    bad({ preset: '3', size, seconds: 1 }, /size/);
+  }
+});
+
 test('a preset job gets its defaults and a canonical size', () => {
   assert.deepEqual(ok({ preset: '3', size: '1080p', seconds: 300 }), {
     preset: '3', size: '1920x1080', seconds: 300, fps: 60, master: false, quality: 'authored',
