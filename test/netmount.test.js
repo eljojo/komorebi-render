@@ -22,6 +22,23 @@ const outDir = () => {
 };
 const mountsFor = (root, fstype) => `/dev/disk3s1s1 on / (apfs, local)\n//nas/home on ${root} (${fstype}, nodev, nosuid)\n`;
 
+test('output access bounds and retains one stalled operation across readers', async () => {
+  assert.equal(typeof netmount.createOutputAccess, 'function');
+  const access = netmount.createOutputAccess({ timeoutMs: 10 });
+  let release, calls = 0;
+  const stalled = new Promise(resolve => { release = resolve; });
+  const read = async () => { calls++; await stalled; return 'ok'; };
+  const first = access('progress', read);
+  assert.equal(access('progress', read), first);
+  await assert.rejects(first, /timed out/);
+  await assert.rejects(access('detail', read), /busy/);
+  await assert.rejects(access('progress', read), /timed out/);
+  assert.equal(calls, 1);
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(await access('detail', read), 'ok');
+  assert.equal(calls, 2);
+});
+
 test('parseMounts reads macOS and Linux mount lines', () => {
   const m = parseMounts(`${MAC}host:/x on /mnt/x type nfs4 (rw,relatime)\n`);
   assert.deepEqual(m.find((x) => x.point === '/Volumes/home'), { device: '//jojo@nas.local/home', point: '/Volumes/home', fstype: 'smbfs' });

@@ -71,3 +71,24 @@ export function createOutputRootCheck(out, { timeoutMs = 5000, ...options } = {}
     return answer;
   };
 }
+
+// A timeout answers the caller, but an SMB syscall still occupies a filesystem thread. Keep that operation
+// until it settles; all output readers share this slot so polling cannot exhaust the thread pool.
+export function createOutputAccess({ timeoutMs = 5000 } = {}) {
+  let pending = null;
+  const access = (key, operation) => {
+    if (pending) return pending.key === key ? pending.answer : pending.answer.then(() => access(key, operation), () => { throw new Error('output access is busy'); });
+    let finish, fail;
+    const answer = new Promise((resolve, reject) => { finish = resolve; fail = reject; });
+    pending = { key, answer };
+    const controller = new AbortController();
+    const timer = setTimeout(() => { controller.abort(); fail(new Error('output access timed out')); }, timeoutMs);
+    const clear = () => {
+      clearTimeout(timer);
+      pending = null;
+    };
+    Promise.resolve().then(() => operation(controller.signal)).then(value => { clear(); finish(value); }, error => { clear(); fail(error); });
+    return answer;
+  };
+  return access;
+}

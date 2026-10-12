@@ -12,6 +12,23 @@ import { readResult } from '../src/exporter.js';
 const SHA = 'a6b6fa25a98d47fa8ae312b4bfae4c9fde99f849';
 const SPEC = { preset: '3', size: '1080p', seconds: 30 };
 
+test('stalled detail reads leave database-only routes responsive without a listener', async () => {
+  const { store, config, submit } = rig();
+  const job = submit(); store.start(job.id, { folder: '/unavailable' });
+  let release;
+  const stalled = new Promise(resolve => { release = resolve; });
+  const api = createApi({ store, config, pin: { commit: SHA }, log: () => {},
+    outputAccess: async (_key, read) => { await stalled; return read(); } });
+  let finished = false;
+  const detail = api.handle({ method: 'GET', url: `/jobs/${job.id}` }).then(r => { finished = true; return r; });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(finished, false);
+    assert.equal((await api.handle({ method: 'GET', url: '/jobs' })).status, 200);
+    assert.equal((await api.handle({ method: 'DELETE', url: `/jobs/${job.id}` })).status, 202);
+  } finally { release(); await detail; store.close(); }
+});
+
 const rig = (over = {}) => {
   const out = realpathSync(mkdtempSync(join(tmpdir(), 'kr-api-')));
   const config = loadConfig({ KOMOREBI_RENDER_STATE: join(out, 'state'), KOMOREBI_RENDER_OUT: out, ...over.env }, '/h');
@@ -26,7 +43,7 @@ const rig = (over = {}) => {
   };
   const submit = (raw = {}) => store.create(validateSpec({ ...SPEC, ...raw }));
   // A job the worker has run: a folder with the files the exporter leaves, then the store's own transitions.
-  const finished = (job, { log = 'segment 0 done\ndone\n', manifest } = {}) => {
+  const finished = async (job, { log = 'segment 0 done\ndone\n', manifest } = {}) => {
     const folder = join(out, job.folder_name);
     mkdirSync(join(folder, 'seg'), { recursive: true });
     writeFileSync(join(folder, 'run.log'), log);
@@ -34,7 +51,7 @@ const rig = (over = {}) => {
     writeFileSync(join(folder, 'manifest.json'), JSON.stringify(manifest ?? { delivery: { bitrate_arg: '60M' }, delivery_probe: { mbit_s: 59.5, size_mib: 12.5, decoded_frames: 1800 }, quality_vs_master: { psnr: { mean: 47.1 }, ssim: { mean: 0.998 } } }));
     store.start(job.id, { folder });
     store.progress(job.id, { done: 3, total: 3 });
-    store.finish(job.id, readResult(folder));
+    store.finish(job.id, await readResult(folder));
     return folder;
   };
   return { out, config, store, api, call, submit, finished, nas };
@@ -150,7 +167,7 @@ test('GET /jobs lists newest first with state, progress, eta_s, size, seconds, q
 
 test('a finished job has no ETA', async () => {
   const { call, submit, finished } = rig();
-  finished(submit());
+  await finished(submit());
   const j = (await call('GET', '/jobs')).json.jobs[0];
   assert.equal(j.state, 'done');
   assert.equal(j.eta_s, null);
@@ -172,7 +189,7 @@ test('GET /jobs/:id adds the folder, the delivery, the Mbit/s, the run.log tail 
   const { call, submit, finished, out } = rig();
   const j = submit({ quality: 'max' });
   const log = Array.from({ length: 30 }, (_, i) => `line ${i}`).join('\n') + '\n';
-  const folder = finished(j, { log });
+  const folder = await finished(j, { log });
   const r = await call('GET', `/jobs/${j.id}`);
   assert.equal(r.status, 200);
   const d = r.json;
@@ -209,7 +226,7 @@ test('a failed job carries its error; a manifest without a measure gives quality
   assert.match(d.error, /FAILED: boom/);
   assert.equal(d.delivery, null);
   const g = submit();
-  finished(g, { manifest: { delivery_probe: { mbit_s: 1, size_mib: 2 } } });
+  await finished(g, { manifest: { delivery_probe: { mbit_s: 1, size_mib: 2 } } });
   assert.equal((await call('GET', `/jobs/${g.id}`)).json.quality_vs_master, null);
 });
 
@@ -245,7 +262,7 @@ test('DELETE /jobs/:id cancels a queued job at once and asks for a running one t
 test('DELETE on a finished job is 409, on an unknown one 404', async () => {
   const { call, submit, finished } = rig();
   const j = submit();
-  finished(j);
+  await finished(j);
   const r = await call('DELETE', `/jobs/${j.id}`);
   assert.equal(r.status, 409);
   assert.match(r.json.error, /already done/);
@@ -290,7 +307,7 @@ test('the share token appears in no response: not when queued, listed, detailed,
   seen.push((await call('GET', '/jobs')).text, (await call('GET', `/jobs/${id}`)).text);
 
   // The exporter echoed the secrets into its log and the job failed with them in its error: the API hides them again.
-  const folder = finished(store.get(id), { log: `fetching 3:${token}\nAuthorization: Bearer ${arb}\n` });
+  const folder = await finished(store.get(id), { log: `fetching 3:${token}\nAuthorization: Bearer ${arb}\n` });
   store.progress(id, { done: 3, total: 3, line: `fetching 3:${token}` });
   seen.push((await call('GET', `/jobs/${id}`)).text, (await call('GET', '/jobs')).text);
   const failed = submit({ preset: `4:${token}` });

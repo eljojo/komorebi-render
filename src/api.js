@@ -3,13 +3,13 @@
 // `listener` is the thin node:http shell around it (reads the body, writes the answer). The same database as the worker's is the
 // only channel: a submit writes a row, the worker takes it; a cancel sets a flag, the worker stops the exporter.
 import { createServer } from 'node:http';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { StoreError } from './store.js';
 import { SpecError, scrubSecrets, validateSpec } from './spec.js';
 import { jobView } from './view.js';
-import { tailLines } from './exporter.js';
-import { createOutputRootCheck } from './netmount.js';
+import { readManifest, tailLines } from './exporter.js';
+import { createOutputAccess, createOutputRootCheck } from './netmount.js';
 
 const MAX_BODY = 1024 * 1024;   // a look's params are tens of KB
 const LLMS = new URL('../llms.txt', import.meta.url);
@@ -28,10 +28,6 @@ function summary(job, now, token) {
     progress: v.progress, eta_s: v.eta?.seconds ?? null, eta_basis: v.eta?.basis ?? null,
     blocked: job.blocked === null ? null : scrubSecrets(job.blocked, job.spec, token), created_at: job.created_at, started_at: job.started_at, finished_at: job.finished_at,
   };
-}
-
-function readManifest(folder) {
-  try { return JSON.parse(readFileSync(join(folder, 'manifest.json'), 'utf8')); } catch { return null; }
 }
 
 // ROUTES is the registry: llms.txt must document every entry (test/llms.test.js).
@@ -53,13 +49,15 @@ function list({ store, config, now }) {
   return json(200, { jobs: store.list().map((j) => summary(j, at, config.token)) });
 }
 
-function detail({ store, config, now }, { id }) {
+async function detail({ store, config, now, outputAccess }, { id }) {
   const job = store.get(id);
   if (!job) return json(404, { error: `no job ${id}` });
   const scrub = (t) => (t === null || t === undefined ? t : scrubSecrets(t, job.spec, config.token));
   const folder = job.folder ?? (config.out ? join(config.out, job.folder_name) : null);
   const started = job.folder !== null;
-  const manifest = started ? readManifest(job.folder) : null;
+  const { manifest, logTail } = started ? await outputAccess(`detail:${job.folder}`, async () => ({
+    manifest: await readManifest(job.folder), logTail: await tailLines(join(job.folder, 'run.log')),
+  })).catch(() => ({ manifest: null, logTail: '' })) : { manifest: null, logTail: '' };
   const r = job.result;
   return json(200, {
     ...summary(job, now(), config.token),
@@ -68,7 +66,7 @@ function detail({ store, config, now }, { id }) {
     delivery: r ? { path: r.delivery, size_mib: r.size_mib, mbit_s: r.mbit_s,
       ...(job.spec.format === 'png' ? { mime_type: r.mime_type, width: r.width, height: r.height, sha256: r.sha256 } : {}) } : null,
     error: scrub(job.error), last_line: scrub(job.last_line),
-    log_tail: started && existsSync(join(job.folder, 'run.log')) ? scrub(tailLines(join(job.folder, 'run.log'))).split('\n').filter(Boolean) : [],
+    log_tail: scrub(logTail).split('\n').filter(Boolean),
     quality_vs_master: manifest?.quality_vs_master ?? null,
     cancel_requested: job.cancel_requested, attempts: job.attempts,
   });
@@ -118,8 +116,8 @@ function match(pattern, path) {
   return params;
 }
 
-export function createApi({ store, config, pin, checkOut, now = Date.now, log = console.error, llmsFile = LLMS }) {
-  const ctx = { store, config, pin, now, llmsFile, checkOut: checkOut ?? createOutputRootCheck(config.out, { allowLocal: config.allowLocal }) };
+export function createApi({ store, config, pin, checkOut, outputAccess = createOutputAccess(), now = Date.now, log = console.error, llmsFile = LLMS }) {
+  const ctx = { store, config, pin, now, llmsFile, outputAccess, checkOut: checkOut ?? createOutputRootCheck(config.out, { allowLocal: config.allowLocal }) };
 
   async function handle({ method, url, body }) {
     try {

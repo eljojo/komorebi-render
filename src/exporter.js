@@ -1,6 +1,6 @@
 // The seam to render-video.mjs: its argv from a spec and its output. Video results are read; PNG delivery and
 // recovery metadata are finalized here. The exporter is komorebi's: there is one definition of a render.
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { access, open, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -34,39 +34,35 @@ export function exporterCommand({ node, args, caffeinate }) {
 }
 
 // The last line of a file, reading only its end: run.log of a long render is megabytes and is polled every few seconds.
-export function tailLine(file, bytes = TAIL_BYTES) {
-  let fd;
-  try {
-    fd = openSync(file, 'r');
-    const size = fstatSync(fd).size;
-    const len = Math.min(size, bytes);
-    const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    const text = buf.toString('utf8').trimEnd();
-    return text.slice(text.lastIndexOf('\n') + 1) || null;
-  } catch { return null; } finally { if (fd !== undefined) closeSync(fd); }
+export async function tailLine(file, bytes = TAIL_BYTES) {
+  const text = (await tailLines(file, 1, bytes));
+  return text || null;
 }
 
 // The last lines of run.log, for a failure message.
-export function tailLines(file, n = 20, bytes = 16384) {
+export async function tailLines(file, n = 20, bytes = 16384) {
   let fd;
   try {
-    fd = openSync(file, 'r');
-    const size = fstatSync(fd).size;
+    fd = await open(file, 'r');
+    const { size } = await fd.stat();
     const len = Math.min(size, bytes);
     const buf = Buffer.alloc(len);
-    readSync(fd, buf, 0, len, size - len);
-    return buf.toString('utf8').trimEnd().split('\n').slice(-n).join('\n');
-  } catch { return ''; } finally { if (fd !== undefined) closeSync(fd); }
+    const { bytesRead } = await fd.read(buf, 0, len, size - len);
+    return buf.subarray(0, bytesRead).toString('utf8').trimEnd().split('\n').slice(-n).join('\n');
+  } catch { return ''; } finally { if (fd !== undefined) await fd.close(); }
+}
+
+export async function readManifest(folder) {
+  try { return JSON.parse(await readFile(join(folder, 'manifest.json'), 'utf8')); } catch { return null; }
 }
 
 // Finished segments are the seg_NNNNN.json the exporter writes once a segment's master, hashes and checkpoint are committed.
-export function progress(folder, seconds) {
+export async function progress(folder, seconds) {
   const total = Math.ceil(seconds / SEGMENT_SECONDS);
   let done = 0;
-  try { done = readdirSync(join(folder, 'seg')).filter((f) => /^seg_\d+\.json$/.test(f)).length; } catch { /* nothing rendered yet */ }
+  try { done = (await readdir(join(folder, 'seg'))).filter((f) => /^seg_\d+\.json$/.test(f)).length; } catch { /* nothing rendered yet */ }
   done = Math.min(done, total);
-  return { done, total, fraction: total ? done / total : 0, lastLine: tailLine(join(folder, 'run.log')) };
+  return { done, total, fraction: total ? done / total : 0, lastLine: await tailLine(join(folder, 'run.log')) };
 }
 
 // Seconds left, from the rate of this attempt only: segments already on disk when it began (a resume) were not rendered in its time.
@@ -77,12 +73,12 @@ export function etaSeconds({ startedAt, now, done, base = 0, total }) {
   return Math.round((elapsed / fresh) * (total - done));
 }
 
-export function readResult(folder, spec = {}) {
+export async function readResult(folder, spec = {}) {
   const manifestFile = join(folder, 'manifest.json');
-  if (!existsSync(manifestFile)) throw new Error('the exporter exited 0 but left no manifest.json');
+  try { await access(manifestFile); } catch { throw new Error('the exporter exited 0 but left no manifest.json'); }
   const delivery = join(folder, spec.format === 'png' ? 'delivery.png' : 'delivery.mp4');
-  if (!existsSync(delivery)) throw new Error(`the exporter exited 0 but left no ${spec.format === 'png' ? 'delivery.png' : 'delivery.mp4'}`);
-  const m = JSON.parse(readFileSync(manifestFile, 'utf8'));
+  try { await access(delivery); } catch { throw new Error(`the exporter exited 0 but left no ${spec.format === 'png' ? 'delivery.png' : 'delivery.mp4'}`); }
+  const m = JSON.parse(await readFile(manifestFile, 'utf8'));
   if (spec.format === 'png') {
     if (!m.image) throw new Error('the PNG has no verified image manifest');
     return { delivery, mime_type: 'image/png', size_mib: m.image.bytes / 2 ** 20, mbit_s: null, frames: 1,
@@ -94,16 +90,17 @@ export function readResult(folder, spec = {}) {
 
 // A single frame goes through the exporter's existing render and linear downscale, never through a lossy MP4.
 // Commit the verified PNG before marking the master discarded, so recovery can reuse the completed exporter run.
-export async function finalizeImage(folder, spec) {
+export async function finalizeImage(folder, spec, signal) {
   const manifestPath = join(folder, 'manifest.json');
-  const m = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const m = JSON.parse(await readFile(manifestPath, 'utf8'));
   if (!m.frame_accounting?.exact || m.frame_accounting.frames_requested !== 1) throw new Error('PNG requires exact one-frame accounting');
-  const source = existsSync(join(folder, 'master-still-00s.png')) ? join(folder, 'master-still-00s.png') : join(folder, 'delivery.png');
-  const bytes = readFileSync(source);
+  let source = join(folder, 'master-still-00s.png');
+  try { await access(source); } catch { source = join(folder, 'delivery.png'); }
+  const bytes = await readFile(source, { signal });
   if (!bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) throw new Error('invalid PNG signature');
   let stdout;
   try {
-    ({ stdout } = await promisify(execFile)('ffmpeg', ['-hide_banner', '-v', 'error', '-xerror', '-i', source, '-map', '0:v:0', '-f', 'framehash', '-']));
+    ({ stdout } = await promisify(execFile)('ffmpeg', ['-hide_banner', '-v', 'error', '-xerror', '-i', source, '-map', '0:v:0', '-f', 'framehash', '-'], { signal }));
   } catch (e) { throw new Error(`PNG decode failed: ${e.stderr || e.message}`); }
   const dimensions = /^#dimensions 0:\s+(\d+)x(\d+)$/m.exec(stdout);
   const decoded = stdout.split('\n').filter(line => /^0,/.test(line));
@@ -111,15 +108,16 @@ export async function finalizeImage(folder, spec) {
   if (!dimensions || Number(dimensions[1]) !== width || Number(dimensions[2]) !== height || decoded.length !== 1) throw new Error('PNG decoded dimensions or frame count disagree with the job');
   const image = { file: 'delivery.png', mime_type: 'image/png', width, height, bytes: bytes.length,
     sha256: createHash('sha256').update(bytes).digest('hex'), frame_index: 0, source: 'lossless RGB master after standard pre-roll and optional linear supersampling' };
-  if (source !== join(folder, 'delivery.png')) renameSync(source, join(folder, 'delivery.png'));
+  signal?.throwIfAborted();
+  if (source !== join(folder, 'delivery.png')) await rename(source, join(folder, 'delivery.png'));
   m.image = image;
   Object.assign(m.master, { discarded: true, segments_on_disk: false });
-  writeFileSync(`${manifestPath}.part`, `${JSON.stringify(m, null, 2)}\n`);
-  renameSync(`${manifestPath}.part`, manifestPath);
+  await writeFile(`${manifestPath}.part`, `${JSON.stringify(m, null, 2)}\n`);
+  await rename(`${manifestPath}.part`, manifestPath);
   const completePath = join(folder, 'complete.json');
-  const complete = JSON.parse(readFileSync(completePath, 'utf8'));
-  writeFileSync(`${completePath}.part`, JSON.stringify({ ...complete, master_discarded: true }));
-  renameSync(`${completePath}.part`, completePath);
-  for (const file of readdirSync(join(folder, 'seg'))) if (/^seg_\d+\.mkv$/.test(file)) unlinkSync(join(folder, 'seg', file));
+  const complete = JSON.parse(await readFile(completePath, 'utf8'));
+  await writeFile(`${completePath}.part`, JSON.stringify({ ...complete, master_discarded: true }));
+  await rename(`${completePath}.part`, completePath);
+  for (const file of (await readdir(join(folder, 'seg')))) if (/^seg_\d+\.mkv$/.test(file)) await unlink(join(folder, 'seg', file));
   return readResult(folder, spec);
 }

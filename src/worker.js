@@ -1,10 +1,11 @@
 // The loop that runs jobs, one at a time. The exporter is a child process; the database is the only channel to it
 // (progress out, cancel in), so a CLI or API in another process drives the same worker.
 import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { LOOK_FILE, exporterArgs, exporterCommand, finalizeImage, progress, readResult, tailLines } from './exporter.js';
-import { createOutputRootCheck } from './netmount.js';
+import { createOutputAccess, createOutputRootCheck } from './netmount.js';
 import { childEnv } from './engine.js';
 import { scrubSecrets } from './spec.js';
 
@@ -14,7 +15,7 @@ const defaultIsOurs = (pid) => {
 };
 
 export function createWorker({
-  store, config, log = console.log, prepare, checkOut,
+  store, config, log = console.log, prepare, checkOut, outputAccess = createOutputAccess(),
   spawn = nodeSpawn, kill = process.kill.bind(process), isOurs = defaultIsOurs,
   node = process.execPath, caffeinate = process.platform === 'darwin' && existsSync('/usr/bin/caffeinate'),
   pollMs = 5000, progressMs = 3000, graceMs = 30000, extraEnv = {},
@@ -58,9 +59,16 @@ export function createWorker({
     const { id, spec } = job;
     const seconds = spec.format === 'png' ? 1 / 60 : spec.seconds;
     const folder = join(config.out, job.folder_name);
-    mkdirSync(folder, { recursive: true });
-    if (spec.look) writeFileSync(join(folder, LOOK_FILE), JSON.stringify({ ...(spec.look.name ? { name: spec.look.name } : {}), params: spec.look.params }));
-    const base = progress(folder, seconds).done;   // segments already on disk: a resume continues after them
+    let base;
+    try {
+      base = await outputAccess(`setup:${folder}`, async (signal) => {
+        await mkdir(folder, { recursive: true });
+        signal.throwIfAborted();
+        if (spec.look) await writeFile(join(folder, LOOK_FILE), JSON.stringify({ ...(spec.look.name ? { name: spec.look.name } : {}), params: spec.look.params }), { signal });
+        return (await progress(folder, seconds)).done;   // segments already on disk: a resume continues after them
+      });
+    } catch (e) { return block(job, `output root: ${scrub(e.message, spec)}`); }
+    if (stopping) return null;
     if (!store.start(id, { folder, base })) return { job, outcome: 'skipped' };
 
     const { cmd, args } = exporterCommand({ node, args: exporterArgs({ script: engine.script, commit: engine.commit, folder, spec }), caffeinate });
@@ -76,25 +84,33 @@ export function createWorker({
       child.on('close', (code, signal) => resolve({ code, signal }));
       if (child.pid) store.setPid(id, child.pid);
       log(`job ${id} started: ${spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.format === 'png' ? 'PNG' : `${spec.seconds}s @${spec.fps}`} (${job.quality.name} quality)`);
+      let closed = false, polling = false;
       const tick = () => {
-        const p = progress(folder, seconds);
-        store.progress(id, { done: p.done, total: p.total, line: p.lastLine === null ? null : scrub(p.lastLine, spec) });
+        if (closed) return;
         if (!killed && store.get(id).cancel_requested) { killed = true; terminate(child); }
+        if (polling) return;
+        polling = true;
+        outputAccess(`progress:${folder}`, () => progress(folder, seconds)).then(p => {
+          if (!closed) store.progress(id, { done: p.done, total: p.total, line: p.lastLine === null ? null : scrub(p.lastLine, spec) });
+        }).catch(() => {}).finally(() => { polling = false; });
       };
       const timer = setInterval(tick, progressMs);
-      child.on('close', () => clearInterval(timer));
-      child.on('error', () => clearInterval(timer));
+      const clear = () => { closed = true; clearInterval(timer); };
+      child.on('close', clear);
+      child.on('error', clear);
     });
     current = null;
 
-    const p = progress(folder, seconds);
-    store.progress(id, { done: p.done, total: p.total, line: p.lastLine === null ? null : scrub(p.lastLine, spec) });
+    try {
+      const p = await outputAccess(`progress:${folder}`, () => progress(folder, seconds));
+      store.progress(id, { done: p.done, total: p.total, line: p.lastLine === null ? null : scrub(p.lastLine, spec) });
+    } catch { /* keep the last database progress if the share is unavailable */ }
     const now = store.get(id);
     if (now.cancel_requested) { store.cancelled(id); log(`job ${id} cancelled`); return { job, outcome: 'cancelled' }; }
     if (stopping) { store.release(id); log(`job ${id} put back in the queue; the exporter resumes it`); return { job, outcome: 'released' }; }
     if (!exit.error && exit.code === 0) {
       try {
-        const result = spec.format === 'png' ? await finalizeImage(folder, spec) : readResult(folder);
+        const result = await outputAccess(`result:${folder}`, signal => spec.format === 'png' ? finalizeImage(folder, spec, signal) : readResult(folder));
         const latest = store.get(id);
         if (latest.cancel_requested) { store.cancelled(id); return { job, outcome: 'cancelled' }; }
         if (stopping) { store.release(id); return { job, outcome: 'released' }; }
@@ -102,7 +118,7 @@ export function createWorker({
       } catch (e) { exit.error = e; }
     }
     const why = exit.error ? exit.error.message : exit.signal ? `killed by ${exit.signal}` : `exit code ${exit.code}`;
-    const detail = tailLines(join(folder, 'run.log')) || stderr.trim();
+    const detail = await outputAccess(`log:${folder}`, () => tailLines(join(folder, 'run.log'))).catch(() => '') || stderr.trim();
     store.fail(id, scrub(`${why}${detail ? `\n${detail}` : ''}`, spec));
     log(`job ${id} failed: ${why}`);
     return { job, outcome: 'failed' };
