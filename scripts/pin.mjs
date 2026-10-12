@@ -7,7 +7,7 @@ import { resolveCommit } from '../src/engine.js';
 
 const file = fileURLToPath(new URL('../komorebi.json', import.meta.url));
 const pin = loadPin(file);
-const sha = resolveCommit({ config: loadConfig(), pin, ref: process.argv[2] ?? 'HEAD' });
+const sha = await resolveCommit({ config: loadConfig(), pin, ref: process.argv[2] ?? 'HEAD' });
 const next = { ...JSON.parse(readFileSync(file, 'utf8')), commit: sha };
 writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
 console.log(sha === pin.commit ? `already pinned to ${sha}` : `pinned ${pin.commit.slice(0, 12)} -> ${sha}`);

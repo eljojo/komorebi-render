@@ -23,12 +23,13 @@ export function createWorker({
   const sleepers = new Set();
   const sleep = (ms) => new Promise((resolve) => { const t = setTimeout(done, ms); function done() { clearTimeout(t); sleepers.delete(done); resolve(); } sleepers.add(done); });
   let stopping = false, preparing = null, current = null;
+  const preparation = new AbortController();
 
   // The token may sit in the exporter's output; it must not reach the database or a log line.
   const scrub = (text, spec) => scrubSecrets(text, spec, config.token);
 
   const ensurePrepared = () => {
-    if (!preparing) preparing = Promise.resolve().then(prepare).catch((e) => { preparing = null; throw e; });
+    if (!preparing) preparing = Promise.resolve().then(() => prepare({ signal: preparation.signal })).catch((e) => { preparing = null; throw e; });
     return preparing;
   };
 
@@ -52,6 +53,7 @@ export function createWorker({
     if (!ok.ok) return block(job, `output root: ${ok.reason}`);
     let engine;
     try { engine = await ensurePrepared(); } catch (e) { return block(job, `engine not ready: ${scrub(e.message, job.spec)}`); }
+    if (stopping) return null;
 
     const { id, spec } = job;
     const seconds = spec.format === 'png' ? 1 / 60 : spec.seconds;
@@ -131,6 +133,7 @@ export function createWorker({
 
   async function stop() {
     stopping = true;
+    preparation.abort();
     for (const wake of [...sleepers]) wake();
     if (current) current.terminate();
   }

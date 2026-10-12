@@ -4,7 +4,27 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from '../src/config.js';
-import { prepare, resolveCommit } from '../src/engine.js';
+import { prepare, resolveCommit, defaultRun } from '../src/engine.js';
+
+test('engine subprocesses let timers run before the command completes', async () => {
+  let ticked = false;
+  const timer = setTimeout(() => { ticked = true; }, 0);
+  const running = defaultRun(process.execPath, ['-e', 'setTimeout(() => {}, 50)']);
+  await new Promise(resolve => setTimeout(resolve, 5));
+  const result = await running;
+  clearTimeout(timer);
+  assert.equal(ticked, true);
+  assert.equal(typeof running.then, 'function');
+  assert.equal(result.status, 0);
+});
+
+test('engine subprocesses can be aborted during preparation', async () => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5);
+  const r = await defaultRun(process.execPath, ['-e', 'setTimeout(() => {}, 50)'], { signal: controller.signal });
+  clearTimeout(timer);
+  assert.equal(r.error?.name, 'AbortError');
+});
 
 const SHA = 'a6b6fa25a98d47fa8ae312b4bfae4c9fde99f849';
 const pin = { repo: 'https://github.com/eljojo/komorebi', commit: SHA };
@@ -36,10 +56,10 @@ const fakeRunner = (config, { missing = 0, npmStatus = 0 } = {}) => {
   return { run, calls };
 };
 
-test('a fresh state dir: mirror clone, pinned worktree, npm ci, chromium into the state dir', () => {
+test('a fresh state dir: mirror clone, pinned worktree, npm ci, chromium into the state dir', async () => {
   const { config } = setup();
   const { run, calls } = fakeRunner(config);
-  const r = prepare({ config, pin, run });
+  const r = await prepare({ config, pin, run });
   const flat = calls.map((c) => [c.cmd, ...c.args].join(' '));
   assert.ok(flat.includes(`git clone --mirror ${pin.repo} ${config.mirror}`), flat.join('\n'));
   assert.ok(flat.some((l) => l.startsWith(`git -C ${config.mirror} worktree add --detach ${config.engineDir(SHA)} ${SHA}`)));
@@ -54,56 +74,56 @@ test('a fresh state dir: mirror clone, pinned worktree, npm ci, chromium into th
   assert.equal(r.commit, SHA);
 });
 
-test('the arboretum token never reaches git, npm or npx', () => {
+test('the arboretum token never reaches git, npm or npx', async () => {
   const { config } = setup();
   const { run, calls } = fakeRunner(config);
-  prepare({ config, pin, run });
+  await prepare({ config, pin, run });
   for (const c of calls) assert.equal(c.env?.ARBORETUM_TOKEN, undefined, `${c.cmd} ${c.args[0]}`);
 });
 
-test('prepare is idempotent: a second call runs nothing', () => {
+test('prepare is idempotent: a second call runs nothing', async () => {
   const { config } = setup();
   const first = fakeRunner(config);
-  prepare({ config, pin, run: first.run });
+  await prepare({ config, pin, run: first.run });
   const second = fakeRunner(config);
-  prepare({ config, pin, run: second.run });
+  await prepare({ config, pin, run: second.run });
   assert.deepEqual(second.calls, []);
 });
 
-test('the mirror is fetched only when it lacks the pinned commit', () => {
+test('the mirror is fetched only when it lacks the pinned commit', async () => {
   const { config } = setup();
   const have = fakeRunner(config);
-  prepare({ config, pin, run: have.run });
+  await prepare({ config, pin, run: have.run });
   assert.ok(!have.calls.some((c) => c.args.includes('fetch')));
   const { config: c2 } = setup();
   const lacks = fakeRunner(c2, { missing: 1 });
-  prepare({ config: c2, pin, run: lacks.run });
+  await prepare({ config: c2, pin, run: lacks.run });
   assert.ok(lacks.calls.some((c) => c.cmd === 'git' && c.args.includes('fetch')));
 });
 
-test('a commit that is not there even after fetching is an error naming it', () => {
+test('a commit that is not there even after fetching is an error naming it', async () => {
   const { config } = setup();
   const { run } = fakeRunner(config, { missing: 99 });
-  assert.throws(() => prepare({ config, pin, run }), new RegExp(SHA));
+  await assert.rejects(() => prepare({ config, pin, run }), new RegExp(SHA));
 });
 
-test('a failed npm ci throws and leaves no marker, so the next prepare retries', () => {
+test('a failed npm ci throws and leaves no marker, so the next prepare retries', async () => {
   const { config } = setup();
-  assert.throws(() => prepare({ config, pin, run: fakeRunner(config, { npmStatus: 1 }).run }), /npm ci/);
+  await assert.rejects(() => prepare({ config, pin, run: fakeRunner(config, { npmStatus: 1 }).run }), /npm ci/);
   const retry = fakeRunner(config);
-  prepare({ config, pin, run: retry.run });
+  await prepare({ config, pin, run: retry.run });
   assert.ok(retry.calls.some((c) => c.cmd === 'npm'));
   assert.ok(!retry.calls.some((c) => c.args.includes('clone')));   // the mirror it already has
 });
 
-test('resolveCommit expands a ref against the mirror and refuses what is not a commit', () => {
+test('resolveCommit expands a ref against the mirror and refuses what is not a commit', async () => {
   const { config } = setup();
   mkdirSync(config.mirror, { recursive: true });
   writeFileSync(join(config.mirror, 'HEAD'), '');
   const run = (cmd, args) => (args.includes('rev-parse') ? { status: 0, stdout: `${SHA}\n`, stderr: '' } : { status: 0, stdout: '', stderr: '' });
-  assert.equal(resolveCommit({ config, pin, run, ref: 'a6b6fa2' }), SHA);
+  assert.equal(await resolveCommit({ config, pin, run, ref: 'a6b6fa2' }), SHA);
   const none = () => ({ status: 128, stdout: '', stderr: 'unknown revision' });
-  assert.throws(() => resolveCommit({ config, pin, run: none, ref: 'nope' }), /nope/);
-  assert.throws(() => resolveCommit({ config, pin, run, ref: '--upload-pack=x' }), /ref/);
+  await assert.rejects(() => resolveCommit({ config, pin, run: none, ref: 'nope' }), /nope/);
+  await assert.rejects(() => resolveCommit({ config, pin, run, ref: '--upload-pack=x' }), /ref/);
   assert.ok(existsSync(config.mirror));
 });

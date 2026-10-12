@@ -53,20 +53,20 @@ export async function main(argv, env = process.env, io = { out: (s) => console.l
         return 0;
       }
       case 'prepare': {
-        const r = prepare({ config, pin: loadPin() });
+        const r = await prepare({ config, pin: loadPin() });
         io.out(JSON.stringify({ commit: r.commit, script: r.script }));
         return 0;
       }
       case 'worker': {
         const pin = loadPin();
-        const worker = createWorker({ store: open(), config, prepare: async () => prepare({ config, pin }) });
+        const worker = createWorker({ store: open(), config, prepare: ({ signal }) => prepare({ config, pin, signal }) });
         for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => worker.stop());
         await worker.run();
         return 0;
       }
       case 'serve': {
         const pin = loadPin();
-        const svc = await serve({ store: open(), config, pin, prepare: async () => prepare({ config, pin }) });
+        const svc = await serve({ store: open(), config, pin, prepare: ({ signal }) => prepare({ config, pin, signal }) });
         for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => svc.stop());
         await svc.finished;
         return 0;
