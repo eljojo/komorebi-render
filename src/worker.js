@@ -62,6 +62,10 @@ export function createWorker({
     let base;
     try {
       base = await outputAccess(`setup:${folder}`, async (signal) => {
+        const ready = await check();
+        if (!ready.ok) throw new Error(ready.reason);
+        if (stopping) return 0;
+        signal.throwIfAborted();
         await mkdir(folder, { recursive: true });
         signal.throwIfAborted();
         if (spec.look) await writeFile(join(folder, LOOK_FILE), JSON.stringify({ ...(spec.look.name ? { name: spec.look.name } : {}), params: spec.look.params }), { signal });

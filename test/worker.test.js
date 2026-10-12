@@ -31,6 +31,15 @@ const submit = (store, raw) => store.create(validateSpec({ size: '1080p', second
 const until = async (fn, ms = 5000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
 const argvOf = (folder) => JSON.parse(readFileSync(join(folder, 'argv.json'), 'utf8'));
 
+test('the output root is checked again after preparing, before any output is written', async () => {
+  let checks = 0;
+  const { store, worker, out } = rig({ checkOut: () => ++checks === 1 ? { ok: true } : { ok: false, reason: 'mount disappeared' } });
+  const job = submit(store, {});
+  assert.equal((await worker.runOnce()).outcome, 'blocked');
+  assert.equal(store.get(job.id).state, 'queued');
+  assert.equal(existsSync(join(out, job.folder_name)), false);
+});
+
 test('a job runs to done: folder, argv, progress, and the delivery from the manifest', async () => {
   const { store, worker, out } = rig();
   const j = submit(store, {});
