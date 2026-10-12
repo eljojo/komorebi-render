@@ -24,6 +24,7 @@ const rig = (over = {}) => {
     checkOut: over.checkOut ?? (() => ({ ok: true, fstype: 'test' })),
     caffeinate: false, pollMs: 10, progressMs: 15, graceMs: 50, extraEnv: over.extraEnv ?? {},
     isOurs: over.isOurs, kill: over.kill,
+    spawn: over.spawn,
   });
   return { out, config, store, worker, lines, prepared };
 };
@@ -38,6 +39,15 @@ test('the output root is checked again after preparing, before any output is wri
   assert.equal((await worker.runOnce()).outcome, 'blocked');
   assert.equal(store.get(job.id).state, 'queued');
   assert.equal(existsSync(join(out, job.folder_name)), false);
+});
+
+test('failure logs scrub credentials just like the database error', async () => {
+  const { store, worker, lines } = rig({ env: { ARBORETUM_TOKEN: 'arb-secret' }, spawn: () => { throw new Error('share-secret and arb-secret'); } });
+  const job = submit(store, { preset: '3:share-secret' });
+  assert.equal((await worker.runOnce()).outcome, 'failed');
+  assert.equal(store.get(job.id).error, '*** and ***');
+  assert.ok(!lines.join('\n').includes('share-secret'));
+  assert.ok(!lines.join('\n').includes('arb-secret'));
 });
 
 test('a job runs to done: folder, argv, progress, and the delivery from the manifest', async () => {

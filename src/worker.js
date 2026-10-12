@@ -124,7 +124,7 @@ export function createWorker({
     const why = exit.error ? exit.error.message : exit.signal ? `killed by ${exit.signal}` : `exit code ${exit.code}`;
     const detail = await outputAccess(`log:${folder}`, () => tailLines(join(folder, 'run.log'))).catch(() => '') || stderr.trim();
     store.fail(id, scrub(`${why}${detail ? `\n${detail}` : ''}`, spec));
-    log(`job ${id} failed: ${why}`);
+    log(`job ${id} failed: ${scrub(why, spec)}`);
     return { job, outcome: 'failed' };
   }
 
