@@ -42,6 +42,8 @@ in {
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
       unitConfig.RequiresMountsFor = [ cfg.outDir ];
+      # The output-root check runs `mount`; the default unit PATH has no util-linux, so every job would be refused.
+      path = [ pkgs.util-linux ];
       environment = {
         KOMOREBI_RENDER_STATE = cfg.stateDir;
         KOMOREBI_RENDER_OUT = cfg.outDir;

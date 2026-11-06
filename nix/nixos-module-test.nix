@@ -36,6 +36,7 @@ assert unit.environment.KOMOREBI_RENDER_OUT == "/mnt/jojo_r2d2/komorebi/jobs";
 assert !(unit.environment ? KOMOREBI_RENDER_ALLOW_LOCAL);
 assert unit.unitConfig.RequiresMountsFor == [ "/mnt/jojo_r2d2/komorebi/jobs" ];
 assert lib.elem "network-online.target" unit.after;
+assert lib.hasInfix (builtins.unsafeDiscardStringContext "${pkgs.util-linux}/bin") (builtins.unsafeDiscardStringContext unit.environment.PATH);
 assert defaults.users.users.komorebi-render.isSystemUser;
 assert customUnit.serviceConfig.ExecStart == "${pkgs.hello}/bin/komorebi-render serve";
 assert customUnit.serviceConfig.User == "jojo";
