@@ -13,14 +13,16 @@ export const SEGMENT_SECONDS = 10;   // the exporter's --segment-seconds default
 export const LOOK_FILE = 'look-input.json';
 const TAIL_BYTES = 4096;
 
-export function exporterArgs({ script, commit, folder, spec }) {
+export function exporterArgs({ script, commit, folder, spec, platform = process.platform }) {
   const q = resolveQuality(spec);
   const image = spec.format === 'png';
   const args = [script, ...(spec.preset ? ['--arboretum', spec.preset] : ['--look-json', join(folder, LOOK_FILE)]),
     '--commit', commit, '--out', folder, '--seconds', String(image ? 1 / 60 : spec.seconds), '--size', spec.size, '--fps', String(image ? 60 : spec.fps)];
   for (const k of QUALITY_KEYS) if (q.set[k] !== undefined) args.push('--set', `${k}=${q.set[k]}`);
   if (q.ss > 1) args.push('--ss', String(q.ss));
+  if (platform === 'linux') args.push('--chrome', 'chromium+angle-vulkan+enable-gpu');
   if (image) return [...args, '--delivery', 'none', '--stills', '0'];
+  if (platform === 'linux') args.push('--delivery', 'libx265');
   if (spec.pipeline && spec.pipeline !== 'master') args.push('--pipeline', spec.pipeline);
   if (spec.delivery?.vt_bitrate) args.push('--vt-bitrate', spec.delivery.vt_bitrate);
   if (spec.delivery?.vt_quality !== undefined) args.push('--vt-quality', String(spec.delivery.vt_quality));

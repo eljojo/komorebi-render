@@ -63,8 +63,10 @@ export async function prepare({ config, pin, run = defaultRun, signal }) {
   }
   const testGl = join(dir, 'test-gl');
   await step(run, env, 'npm ci', 'npm', ['ci', '--no-audit', '--no-fund'], testGl, signal);
-  mkdirSync(config.browsers, { recursive: true });
-  await step(run, env, 'playwright install chromium', 'npx', ['playwright', 'install', 'chromium'], testGl, signal);
+  if (config.installBrowsers) {
+    mkdirSync(config.browsers, { recursive: true });
+    await step(run, env, 'playwright install chromium', 'npx', ['playwright', 'install', 'chromium'], testGl, signal);
+  }
   writeFileSync(marker, `${sha}\n`);
   return result;
 }

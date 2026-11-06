@@ -1,10 +1,14 @@
 # komorebi-render API
 
-komorebi-render queues PNG stills and videos of sunlight through leaves and runs komorebi's pinned WebGL2 exporter on the Mac mini's GPU.
+komorebi-render queues PNG stills and videos of sunlight through leaves and runs komorebi's pinned WebGL2 exporter on the host's GPU.
 There is one worker, so jobs queue. The API and worker run together with `komorebi-render serve`.
 The default address is http://<mini's tailnet name or IP>:8077; KOMOREBI_RENDER_HOST defaults to 0.0.0.0.
 There is no authentication yet. Use the LAN or tailnet; authentication must precede Cloudflare exposure.
 Responses are JSON except GET /llms.txt. Examples below use `base=http://jojo-m4-mini:8077`.
+
+On Linux with an AMD GPU, PNG requests use the same spec. Video requests use the default `master` pipeline with `delivery`
+omitted: rendering uses Vulkan on the GPU, and HEVC encoding uses CPU libx265. The `gpu`, `gpu-main10` and `browser`
+pipelines and VideoToolbox delivery controls are Mac-only.
 
 ## Job spec
 

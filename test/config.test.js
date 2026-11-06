@@ -38,6 +38,13 @@ test('the environment overrides every path and limit', () => {
   assert.deepEqual([c.state, c.out, c.maxSeconds, c.host, c.allowLocal, c.token], ['/s', '/Volumes/home/komorebi/jobs', 43200, '127.0.0.1', true, 't']);
 });
 
+test('Nix-provided Playwright browsers are used without installing into their store path', () => {
+  const config = loadConfig({ PLAYWRIGHT_BROWSERS_PATH: '/nix/store/packaged-browsers' }, '/h');
+  assert.equal(config.browsers, '/nix/store/packaged-browsers');
+  assert.equal(config.installBrowsers, false);
+  assert.equal(loadConfig({}, '/h').installBrowsers, true);
+});
+
 test('a bad maximum is refused at startup, not at the first job', () => {
   for (const v of ['0', '-5', 'abc', '1.5']) assert.throws(() => loadConfig({ KOMOREBI_RENDER_MAX_SECONDS: v }, '/h'), /KOMOREBI_RENDER_MAX_SECONDS/);
 });
@@ -45,7 +52,7 @@ test('a bad maximum is refused at startup, not at the first job', () => {
 test('the pin is a full sha', () => {
   const pin = loadPin();
   assert.match(pin.commit, /^[0-9a-f]{40}$/);
-  assert.equal(pin.commit, '12012228ddd68c21436b244269b4932d31b4aee3');
+  assert.equal(pin.commit, '0b72a612a2ec5e2e671fa2c8bf237ed0969ff964');
   assert.match(pin.repo, /^https:\/\/github\.com\/eljojo\/komorebi/);
 });
 

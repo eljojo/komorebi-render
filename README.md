@@ -1,7 +1,7 @@
 # komorebi-render
 
 A render server for [komorebi](https://github.com/eljojo/komorebi): send a look and a size for a PNG still, or add a length
-for a video. Outputs are rendered on the Mac mini's GPU and written to the NAS.
+for a video. Outputs are rendered on the host's GPU and written to the NAS.
 
 It does not render anything itself. It runs komorebi's own video exporter (`test-gl/render-video.mjs`) from a **pinned
 komorebi commit** (`komorebi.json`), so there is one definition of a render. What it adds is a queue, a worker, progress,
@@ -26,6 +26,41 @@ before `nix flake check` / `nix develop`, or use `path:$PWD`.
 
 The first job (or `komorebi-render prepare`) sets up the engine under the state dir: a bare mirror of komorebi, a worktree of the
 pinned commit, `npm ci` in its `test-gl/`, and Chromium for Playwright. That needs the network once.
+
+## Linux with an AMD GPU
+
+The Linux Nix package and dev shell provide patched Playwright Chromium and Mesa. Jobs render through ANGLE Vulkan;
+SwiftShader and other software renderers are refused. The service user needs access to `/dev/dri/renderD*`.
+
+PNG jobs use the same specification as on the Mac. For video, use the default `master` pipeline and omit `delivery`:
+rendering runs on the GPU, while `libx265` encodes HEVC on the CPU at CRF 16 with the slow preset. The `gpu`, `gpu-main10`
+and `browser` pipelines and `vt_bitrate`/`vt_quality` controls remain Mac-only. Linux hardware video encoding is not implemented.
+
+`PLAYWRIGHT_BROWSERS_PATH` selects externally managed browsers. `prepare` still installs the engine's npm dependencies,
+but skips browser installation when this variable is set; the Linux package sets it to the Nix browser package.
+The browser package must match the engine's pinned Playwright version. `VK_DRIVER_FILES` and `LIBGL_DRIVERS_PATH` select
+the Mesa drivers; the package supplies AMD defaults, which existing environment values can override.
+
+The queue, output-mount guard and resume behavior are shared with the Mac. For an isolated local test, explicitly set
+`KOMOREBI_RENDER_ALLOW_LOCAL=1` and put both state and output under the test directory.
+
+Import `nixosModules.default` to configure `services.komorebi-render` on NixOS:
+
+```nix
+imports = [ inputs.komorebi-render.nixosModules.default ];
+services.komorebi-render = {
+  enable = true;
+  user = "jojo";
+  outDir = "/mnt/jojo_r2d2/komorebi/wiggum/jobs";
+};
+```
+
+The module runs the API and worker under systemd, grants render-group access and waits for the output filesystem.
+It creates a private local state directory, restarts on failure and keeps the network-mount guard enabled.
+The default user is a dedicated `komorebi-render` system user; select an existing user when NFS ownership requires it.
+The other options are `package`, `host`, `port`, `stateDir` and `maxSeconds`. State defaults to `/var/lib/komorebi-render`;
+the listen address, port and duration limit have the same defaults as the CLI.
+The caller declares the NAS mount and creates the output directory after that mount is available.
 
 ## CLI
 

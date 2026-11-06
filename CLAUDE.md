@@ -15,7 +15,7 @@ before you change how it is called.
 - **`src/exporter.js`** — the seam to render-video.mjs: argv from a spec, the caffeinate wrapper, progress from `seg/*.json`, the bounded `run.log` tail, the ETA from a run's own rate, the result from `manifest.json`. PNG uses one frame and the exporter's master still; `finalizeImage` decodes and checks dimensions, publishes delivery.png with SHA256/provenance, then discards the temporary master with recovery markers.
 - **`src/store.js`** — `jobs.sqlite` over `node:sqlite`: the job table and its guarded state machine (queued, running, done, failed, cancelled), cancel requests, requeue at start.
 - **`src/netmount.js`** — the async output-root check: exists, writable (a real write), on a network mount (`mount` output, injectable); `createOutputRootCheck` bounds callers to five seconds while retaining one stuck probe until it settles.
-- **`src/engine.js`** — `prepare` (mirror, pinned worktree, `npm ci`, Chromium) and `resolveCommit`, over an injectable runner. The worktree is what makes the exporter's `--commit` (`git -C <its repo> archive`) work.
+- **`src/engine.js`** — `prepare` (mirror, pinned worktree, `npm ci`, Chromium unless supplied by `PLAYWRIGHT_BROWSERS_PATH`) and `resolveCommit`, over an injectable runner. The worktree is what makes the exporter's `--commit` (`git -C <its repo> archive`) work.
 - **`src/worker.js`** — `createWorker`: takes a job, checks the output root, prepares once, spawns the exporter in its own process group, polls progress and cancel, ends the job, recovers at start.
 - **`src/view.js`** — `jobView`: a job as the CLI and API show it (redacted spec, effective pipeline, progress, ETA).
 - **`src/api.js`** — `createApi`: the six routes in `ROUTES`, a directly testable handler and the thin node:http listener; summaries, details, refusals and token scrubbing.
@@ -23,6 +23,8 @@ before you change how it is called.
 - **`llms.txt`** — the API contract for agents, served as text/plain; `test/llms.test.js` checks routes, fields, values, examples and etiquette against the code.
 - **`nix/darwin-module.nix`** — `services.komorebi-render`: a caffeinated launchd user agent, runtime token-file path, logs, and state-directory creation before launchd loads it.
 - **`nix/module-test.nix`** — evaluates the module with stub launchd/activation options and checks disabled behavior, defaults, overrides, arguments, environment and logs.
+- **`nix/nixos-module.nix`** — `nixosModules.default`: the systemd API and worker, service user, render-group access, local state and output-mount ordering.
+- **`nix/nixos-module-test.nix`** — evaluates the NixOS module against the real NixOS options and checks disabled behavior, ownership, mount ordering and overrides.
 - **`scripts/pin.mjs`** — bumps `komorebi.json`.
 - **`test/*.test.js`** — `node --test`; no GPU, no network, no real git/npm. `fixtures/fake-exporter.mjs` stands in for render-video (seg/*.json, run.log, manifest.json, exit code from `FAKE_MODE`).
 - **`test/stills.test.js`** — PNG spec/argv, API-to-worker results, decoded image dimensions and corruption, recovery after publication, cancellation/redaction, CLI and guide coverage. FFmpeg makes and decodes tiny CPU-only PNG fixtures.

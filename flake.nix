@@ -7,6 +7,11 @@
     let
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+      linuxEnvironment = pkgs: pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers-chromium}";
+        VK_DRIVER_FILES = "${pkgs.mesa}/share/vulkan/icd.d/radeon_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json";
+        LIBGL_DRIVERS_PATH = "${pkgs.mesa}/lib/dri";
+      };
 
       # Only what the server and its tests need: a stray file in the checkout must not change the package's hash.
       source = pkgs: pkgs.lib.fileset.toSource {
@@ -17,10 +22,11 @@
       # `nix develop -c node --test` — node 22 (node:sqlite works without a flag from 22.13, with an ExperimentalWarning
       # on stderr), ffmpeg and git are the whole toolchain. The exporter's own deps (playwright, chromium) live in the
       # state dir, put there by `komorebi-render prepare`, never in nix.
+      # Linux uses Nix-patched Chromium and Mesa instead; the state-dir browser setup above is the Darwin path.
       devShells = forAll (pkgs: {
-        default = pkgs.mkShell {
+        default = pkgs.mkShell ({
           packages = [ pkgs.nodejs_22 pkgs.ffmpeg pkgs.git ];
-        };
+        } // linuxEnvironment pkgs);
       });
 
       # bin/komorebi-render. PATH is prefixed, not replaced: caffeinate lives in /usr/bin and must stay reachable.
@@ -37,6 +43,7 @@
             cp -r src scripts komorebi.json package.json llms.txt $out/lib/komorebi-render/
             makeWrapper ${pkgs.nodejs_22}/bin/node $out/bin/komorebi-render \
               --add-flags "--disable-warning=ExperimentalWarning $out/lib/komorebi-render/src/cli.js" \
+              ${pkgs.lib.concatStringsSep " " (pkgs.lib.mapAttrsToList (name: value: "--set-default ${name} ${pkgs.lib.escapeShellArg value}") (linuxEnvironment pkgs))} \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs_22 pkgs.ffmpeg pkgs.git ]}
             runHook postInstall
           '';
@@ -66,9 +73,12 @@
           node --disable-warning=ExperimentalWarning --test
           touch $out
         '';
+      } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        nixos-module = import ./nix/nixos-module-test.nix { inherit pkgs self; lib = pkgs.lib; };
       });
 
       # The logged-in session owns the GPU and keychain; the module runs the API and worker together as a user agent.
       darwinModules.default = import ./nix/darwin-module.nix self;
+      nixosModules.default = import ./nix/nixos-module.nix self;
     };
 }

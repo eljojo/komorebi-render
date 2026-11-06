@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { exporterArgs, exporterCommand, progress, readResult, etaSeconds, LOOK_FILE } from '../src/exporter.js';
 
 const SHA = 'a6b6fa25a98d47fa8ae312b4bfae4c9fde99f849';
-const base = { script: '/e/test-gl/render-video.mjs', commit: SHA, folder: '/out/2026-10-10-1-preset-3' };
+const base = { script: '/e/test-gl/render-video.mjs', commit: SHA, folder: '/out/2026-10-10-1-preset-3', platform: 'darwin' };
 const spec = (extra = {}) => ({ preset: '3', size: '1920x1080', seconds: 300, fps: 60, master: false, ...extra });
 
 test('NAS progress reads yield the event loop', async () => {
@@ -31,6 +31,15 @@ test('a look job reads the look from a file beside the exporter output, never fr
   assert.notEqual(LOOK_FILE, 'look.json');   // the exporter rewrites look.json: reading it back would change the run key
   assert.ok(!args.includes('--arboretum'));
   assert.equal(args[args.indexOf('--size') + 1], '3840x2160');
+});
+
+test('Linux jobs select hardware Vulkan and CPU HEVC; stills keep delivery disabled', () => {
+  const video = exporterArgs({ ...base, platform: 'linux', spec: spec() });
+  assert.equal(video[video.indexOf('--chrome') + 1], 'chromium+angle-vulkan+enable-gpu');
+  assert.equal(video[video.indexOf('--delivery') + 1], 'libx265');
+  const image = exporterArgs({ ...base, platform: 'linux', spec: spec({ format: 'png' }) });
+  assert.equal(image[image.indexOf('--chrome') + 1], 'chromium+angle-vulkan+enable-gpu');
+  assert.equal(image[image.indexOf('--delivery') + 1], 'none');
 });
 
 test('delivery options become the exporter flags', async () => {

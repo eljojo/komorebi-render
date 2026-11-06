@@ -81,6 +81,16 @@ test('the arboretum token never reaches git, npm or npx', async () => {
   for (const c of calls) assert.equal(c.env?.ARBORETUM_TOKEN, undefined, `${c.cmd} ${c.args[0]}`);
 });
 
+test('prepare keeps Nix-provided browsers and installs only the engine dependencies', async () => {
+  const { state } = setup();
+  const config = loadConfig({ KOMOREBI_RENDER_STATE: state, PLAYWRIGHT_BROWSERS_PATH: '/nix/store/packaged-browsers' }, '/h');
+  const { run, calls } = fakeRunner(config);
+  await prepare({ config, pin, run });
+  assert.ok(calls.some(c => c.cmd === 'npm'));
+  assert.ok(!calls.some(c => c.cmd === 'npx'));
+  assert.ok(calls.every(c => c.env.PLAYWRIGHT_BROWSERS_PATH === '/nix/store/packaged-browsers'));
+});
+
 test('prepare is idempotent: a second call runs nothing', async () => {
   const { config } = setup();
   const first = fakeRunner(config);
