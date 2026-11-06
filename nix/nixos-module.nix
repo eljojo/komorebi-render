@@ -43,7 +43,8 @@ in {
       after = [ "network-online.target" ];
       unitConfig.RequiresMountsFor = [ cfg.outDir ];
       # The output-root check runs `mount`; the default unit PATH has no util-linux, so every job would be refused.
-      path = [ pkgs.util-linux ];
+      # The exporter exports its engine with `sh -c 'git archive | tar -x'`; without bash and tar every job fails there.
+      path = [ pkgs.util-linux pkgs.bash pkgs.gnutar ];
       environment = {
         KOMOREBI_RENDER_STATE = cfg.stateDir;
         KOMOREBI_RENDER_OUT = cfg.outDir;
