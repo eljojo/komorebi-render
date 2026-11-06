@@ -34,7 +34,7 @@ function parseSize(s, image = false) {
   return `${w}x${h}`;
 }
 
-export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS } = {}) {
+export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS, platform = process.platform } = {}) {
   if (!isObject(raw)) throw new SpecError(['spec must be a JSON object']);
   const errors = [];
   for (const k of Object.keys(raw)) if (!KEYS.includes(k)) errors.push(`unknown key "${k}"`);
@@ -100,6 +100,11 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS } = {}) {
         }
         if (Object.keys(out).length) spec.delivery = out;
       }
+    }
+    // Linux encodes with VA-API: the exporter refuses these only after the job has started.
+    if (platform === 'linux') {
+      if (spec.pipeline === 'browser') errors.push('pipeline browser is Mac-only; on Linux use master, gpu or gpu-main10');
+      for (const k of Object.keys(spec.delivery ?? {})) errors.push(`delivery.${k} is Mac-only (VideoToolbox); omit delivery on Linux`);
     }
   }
 

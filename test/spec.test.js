@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateSpec, SpecError, folderName, slugify, redactSpec, scrubSecrets, SPEC_KEYS, DELIVERY_KEYS, DEFAULT_MAX_SECONDS } from '../src/spec.js';
 
-const ok = (raw) => validateSpec(raw);
-const bad = (raw, re) => assert.throws(() => validateSpec(raw), (e) => e instanceof SpecError && re.test(e.message));
+// The Mac's rules; the Linux refusals have their own test.
+const ok = (raw) => validateSpec(raw, { platform: 'darwin' });
+const bad = (raw, re) => assert.throws(() => validateSpec(raw, { platform: 'darwin' }), (e) => e instanceof SpecError && re.test(e.message));
 
 test('inherited object properties are not size aliases', () => {
   for (const size of ['toString', 'constructor', '__proto__']) {
@@ -144,6 +145,17 @@ test('direct pipelines refuse retained masters; browser refuses delivery control
   for (const delivery of [{ vt_quality: 100 }, { vt_bitrate: '80M' }]) {
     assert.throws(() => ok({ ...base, pipeline: 'browser', delivery }), e => e instanceof SpecError && e.fields[0] === 'delivery');
   }
+});
+
+test('Linux refuses the browser pipeline and VideoToolbox controls at submit, with their fields', () => {
+  const base = { preset: '3', size: '1080p', seconds: 5 };
+  const linux = (raw) => validateSpec(raw, { platform: 'linux' });
+  const fields = (raw) => { try { linux(raw); } catch (e) { return e.fields; } };
+  assert.deepEqual(fields({ ...base, pipeline: 'browser' }), ['pipeline']);
+  assert.deepEqual(fields({ ...base, pipeline: 'gpu', delivery: { vt_quality: 100 } }), ['delivery.vt_quality']);
+  assert.deepEqual(fields({ ...base, delivery: { vt_bitrate: '80M' } }), ['delivery.vt_bitrate']);
+  for (const pipeline of [undefined, 'master', 'gpu', 'gpu-main10']) assert.equal(linux({ ...base, pipeline, delivery: {} }).pipeline, pipeline);
+  assert.equal(linux({ preset: '3', size: '1080p', format: 'png' }).format, 'png');
 });
 
 test('scrubSecrets hides the arboretum token and the preset share token wherever they appear', () => {

@@ -34,7 +34,8 @@ SwiftShader and other software renderers are refused. The service user needs acc
 
 PNG jobs use the same specification as on the Mac. Video jobs use AMD hardware HEVC encoding through VA-API on
 `/dev/dri/renderD128`: eight-bit Main for `master` and `gpu`, ten-bit Main10 for `gpu-main10`. The bitrate is 60M with a
-75M cap and 120M buffer. Omit `delivery`; the `vt_bitrate`/`vt_quality` controls and `browser` pipeline remain Mac-only.
+75M cap and 120M buffer. Omit `delivery`; the `vt_bitrate`/`vt_quality` controls and `browser` pipeline remain Mac-only
+and are refused at submit.
 Hardware initialization or encoding failures fail the job; there is no CPU encoder fallback.
 
 `PLAYWRIGHT_BROWSERS_PATH` selects externally managed browsers. `prepare` still installs the engine's npm dependencies,

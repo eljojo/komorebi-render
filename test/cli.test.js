@@ -11,7 +11,9 @@ test('CLI submit, status and list identify the effective pipeline without changi
   const env = { KOMOREBI_RENDER_STATE: state };
   const output = [];
   const io = { out: s => output.push(s), err: s => assert.fail(s) };
-  for (const pipeline of [undefined, 'gpu', 'gpu-main10', 'browser']) {
+  // A Linux host refuses browser at submit (spec.test.js).
+  const pipelines = [undefined, 'gpu', 'gpu-main10', ...(process.platform === 'linux' ? [] : ['browser'])];
+  for (const pipeline of pipelines) {
     writeFileSync(file, JSON.stringify({ preset: '3', size: '1080p', seconds: 5, ...(pipeline ? { pipeline } : {}) }));
     assert.equal(await main(['submit', file], env, io), 0);
     const job = JSON.parse(output.pop());
@@ -22,5 +24,5 @@ test('CLI submit, status and list identify the effective pipeline without changi
   }
   assert.equal(await main(['list'], env, io), 0);
   const rows = output.map(s => s.split('\t'));
-  assert.deepEqual(rows.map(row => row[4]), ['browser', 'gpu-main10', 'gpu', 'master']);
+  assert.deepEqual(rows.map(row => row[4]), pipelines.map(p => p ?? 'master').reverse());
 });

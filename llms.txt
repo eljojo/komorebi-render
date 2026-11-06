@@ -9,7 +9,7 @@ Responses are JSON except GET /llms.txt. Examples below use `base=http://jojo-m4
 On Linux with an AMD GPU, PNG requests use the same spec. Video requests use `master`, `gpu` or `gpu-main10` with `delivery`
 omitted: rendering uses Vulkan and HEVC encoding uses VA-API on `/dev/dri/renderD128`. Main/Main10 is selected by the pipeline;
 encoding uses 60M with a 75M cap and 120M buffer, with no CPU fallback. The `browser` pipeline and VideoToolbox delivery
-controls remain Mac-only.
+controls remain Mac-only; a Linux host refuses them with 422 at submit.
 
 ## Job spec
 

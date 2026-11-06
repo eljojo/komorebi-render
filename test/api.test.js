@@ -62,14 +62,16 @@ test('API accepts and displays every pipeline, including the effective master de
   const old = submit();
   assert.equal('pipeline' in store.get(old.id).spec, false);
   assert.equal((await call('GET', `/jobs/${old.id}`)).json.pipeline, 'master');
-  for (const pipeline of ['master', 'gpu', 'gpu-main10', 'browser']) {
+  // A Linux host refuses browser at submit (spec.test.js); these are the pipelines this host accepts.
+  const pipelines = ['master', 'gpu', 'gpu-main10', ...(process.platform === 'linux' ? [] : ['browser'])];
+  for (const pipeline of pipelines) {
     const r = await call('POST', '/jobs', { ...SPEC, pipeline });
     assert.equal(r.status, 201);
     const detail = (await call('GET', `/jobs/${r.json.id}`)).json;
     assert.equal(detail.pipeline, pipeline);
     assert.equal(detail.spec.pipeline, pipeline);
   }
-  assert.deepEqual((await call('GET', '/jobs')).json.jobs.map(j => j.pipeline), ['browser', 'gpu-main10', 'gpu', 'master', 'master']);
+  assert.deepEqual((await call('GET', '/jobs')).json.jobs.map(j => j.pipeline), [...pipelines].reverse().concat('master'));
 });
 
 test('API refuses incompatible master and browser delivery choices with their fields', async () => {
