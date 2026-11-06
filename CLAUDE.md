@@ -6,8 +6,8 @@ before you change how it is called.
 
 ## Files
 
-- **`flake.nix`** — devShell (node 22, ffmpeg, git), `packages.default` (bin/komorebi-render and llms.txt, PATH prefixed so `caffeinate` stays reachable), `apps`, `checks.tests`, `checks.darwin-module`, `darwinModules.default`.
-- **`komorebi.json`** — the pinned komorebi commit (full sha) and its repo URL. Bumped by `scripts/pin.mjs`.
+- **`flake.nix`** — devShell (node 22, ffmpeg, git), `packages.default` (bin/komorebi-render and llms.txt, PATH prefixed so `caffeinate` stays reachable), `apps`, `checks.tests`, `checks.darwin-module`, `checks.playwright` (nixpkgs' Playwright equals the pin's), `darwinModules.default`.
+- **`komorebi.json`** — the pinned komorebi commit (full sha), its repo URL and its `test-gl` Playwright version. Bumped by `scripts/pin.mjs`.
 - **`src/cli.js`** — the commands: submit, list, status, cancel, prepare, worker, serve. Thin: it calls the modules below.
 - **`src/config.js`** — `loadConfig(env)`: every path and limit the environment decides, ARBORETUM_TOKEN (or its runtime token file), `maxSeconds`, `host`, `port`. `loadPin()` reads `komorebi.json`.
 - **`src/spec.js`** — the job spec: validation into the canonical shape (`validateSpec`, `SpecError`), PNG or default MP4, four video pipelines and their master/delivery restrictions, the folder name, the share-token redaction. PNG refuses video-only fields; older video specs keep omitted format/pipeline.

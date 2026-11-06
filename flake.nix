@@ -75,6 +75,11 @@
           node --disable-warning=ExperimentalWarning --test
           touch $out
         '';
+        # Linux runs the engine's npm Playwright against Nix's Chromium; they work only at the same version.
+        playwright = let pinned = (pkgs.lib.importJSON ./komorebi.json).playwright; in
+          if pkgs.playwright-driver.version == pinned
+          then pkgs.runCommand "komorebi-render-playwright" {} "touch $out"
+          else throw "nixpkgs playwright-driver ${pkgs.playwright-driver.version} does not match the pinned engine's Playwright ${pinned} (komorebi.json); move nixpkgs or the pin so they agree";
       } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         nixos-module = import ./nix/nixos-module-test.nix { inherit pkgs self; lib = pkgs.lib; };
       });
