@@ -32,14 +32,16 @@ pinned commit, `npm ci` in its `test-gl/`, and Chromium for Playwright. That nee
 The Linux Nix package and dev shell provide patched Playwright Chromium and Mesa. Jobs render through ANGLE Vulkan;
 SwiftShader and other software renderers are refused. The service user needs access to `/dev/dri/renderD*`.
 
-PNG jobs use the same specification as on the Mac. For video, use the default `master` pipeline and omit `delivery`:
-rendering runs on the GPU, while `libx265` encodes HEVC on the CPU at CRF 16 with the slow preset. The `gpu`, `gpu-main10`
-and `browser` pipelines and `vt_bitrate`/`vt_quality` controls remain Mac-only. Linux hardware video encoding is not implemented.
+PNG jobs use the same specification as on the Mac. Video jobs use AMD hardware HEVC encoding through VA-API on
+`/dev/dri/renderD128`: eight-bit Main for `master` and `gpu`, ten-bit Main10 for `gpu-main10`. The bitrate is 60M with a
+75M cap and 120M buffer. Omit `delivery`; the `vt_bitrate`/`vt_quality` controls and `browser` pipeline remain Mac-only.
+Hardware initialization or encoding failures fail the job; there is no CPU encoder fallback.
 
 `PLAYWRIGHT_BROWSERS_PATH` selects externally managed browsers. `prepare` still installs the engine's npm dependencies,
 but skips browser installation when this variable is set; the Linux package sets it to the Nix browser package.
 The browser package must match the engine's pinned Playwright version. `VK_DRIVER_FILES` and `LIBGL_DRIVERS_PATH` select
-the Mesa drivers; the package supplies AMD defaults, which existing environment values can override.
+the Mesa graphics drivers; `LIBVA_DRIVERS_PATH` and `LIBVA_DRIVER_NAME=radeonsi` select the AMD video driver.
+The package supplies these defaults, which existing environment values can override.
 
 The queue, output-mount guard and resume behavior are shared with the Mac. For an isolated local test, explicitly set
 `KOMOREBI_RENDER_ALLOW_LOCAL=1` and put both state and output under the test directory.
@@ -144,8 +146,8 @@ the MP4 encoder; it does not set the render resolution or lower scene quality.
 | Pipeline | Use it for | Capture and encoding |
 | --- | --- | --- |
 | `master` | Lossless archives, studies, and re-encoding deliveries later | Existing lossless RGB segment masters, then an eight-bit HEVC MP4. Default; master retention remains off unless requested. |
-| `gpu` | Everyday production MP4s | Resize on the GPU when supersampling, read back output-sized RGB, encode eight-bit HEVC using VideoToolbox. Extremely close to the old output in the measured comparison. |
-| `gpu-main10` | Highest measured production fidelity, especially faint colours | Same GPU capture, direct ten-bit YUV conversion and VideoToolbox HEVC Main10. Source RGB is still eight-bit; this is SDR, not HDR. |
+| `gpu` | Everyday production MP4s | Resize on the GPU when supersampling, read back output-sized RGB, encode eight-bit HEVC using VideoToolbox on Mac or VA-API on AMD Linux. Extremely close to the old output in the measured Mac comparison. |
+| `gpu-main10` | Highest measured production fidelity, especially faint colours | Same GPU capture, direct ten-bit YUV conversion and hardware HEVC Main10. Source RGB is still eight-bit; this is SDR, not HDR. |
 | `browser` | Short scene-planning tests and fastest turnaround | GPU capture into VideoFrame, direct browser HEVC encoding at fixed QP1, then MP4 muxing. Small measured fidelity loss compared with the old output. |
 
 `master: true` is only accepted with the master pipeline; it is refused for the three direct pipelines, which have no

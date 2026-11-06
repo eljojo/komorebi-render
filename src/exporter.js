@@ -22,7 +22,7 @@ export function exporterArgs({ script, commit, folder, spec, platform = process.
   if (q.ss > 1) args.push('--ss', String(q.ss));
   if (platform === 'linux') args.push('--chrome', 'chromium+angle-vulkan+enable-gpu');
   if (image) return [...args, '--delivery', 'none', '--stills', '0'];
-  if (platform === 'linux') args.push('--delivery', 'libx265');
+  if (platform === 'linux') args.push('--delivery', 'hevc_vaapi');
   if (spec.pipeline && spec.pipeline !== 'master') args.push('--pipeline', spec.pipeline);
   if (spec.delivery?.vt_bitrate) args.push('--vt-bitrate', spec.delivery.vt_bitrate);
   if (spec.delivery?.vt_quality !== undefined) args.push('--vt-quality', String(spec.delivery.vt_quality));

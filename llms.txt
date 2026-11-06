@@ -6,9 +6,10 @@ The default address is http://<mini's tailnet name or IP>:8077; KOMOREBI_RENDER_
 There is no authentication yet. Use the LAN or tailnet; authentication must precede Cloudflare exposure.
 Responses are JSON except GET /llms.txt. Examples below use `base=http://jojo-m4-mini:8077`.
 
-On Linux with an AMD GPU, PNG requests use the same spec. Video requests use the default `master` pipeline with `delivery`
-omitted: rendering uses Vulkan on the GPU, and HEVC encoding uses CPU libx265. The `gpu`, `gpu-main10` and `browser`
-pipelines and VideoToolbox delivery controls are Mac-only.
+On Linux with an AMD GPU, PNG requests use the same spec. Video requests use `master`, `gpu` or `gpu-main10` with `delivery`
+omitted: rendering uses Vulkan and HEVC encoding uses VA-API on `/dev/dri/renderD128`. Main/Main10 is selected by the pipeline;
+encoding uses 60M with a 75M cap and 120M buffer, with no CPU fallback. The `browser` pipeline and VideoToolbox delivery
+controls remain Mac-only.
 
 ## Job spec
 

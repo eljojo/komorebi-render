@@ -11,6 +11,8 @@
         PLAYWRIGHT_BROWSERS_PATH = "${pkgs.playwright-driver.browsers-chromium}";
         VK_DRIVER_FILES = "${pkgs.mesa}/share/vulkan/icd.d/radeon_icd.${pkgs.stdenv.hostPlatform.parsed.cpu.name}.json";
         LIBGL_DRIVERS_PATH = "${pkgs.mesa}/lib/dri";
+        LIBVA_DRIVERS_PATH = "${pkgs.mesa}/lib/dri";
+        LIBVA_DRIVER_NAME = "radeonsi";
       };
 
       # Only what the server and its tests need: a stray file in the checkout must not change the package's hash.

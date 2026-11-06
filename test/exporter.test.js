@@ -33,10 +33,12 @@ test('a look job reads the look from a file beside the exporter output, never fr
   assert.equal(args[args.indexOf('--size') + 1], '3840x2160');
 });
 
-test('Linux jobs select hardware Vulkan and CPU HEVC; stills keep delivery disabled', () => {
-  const video = exporterArgs({ ...base, platform: 'linux', spec: spec() });
-  assert.equal(video[video.indexOf('--chrome') + 1], 'chromium+angle-vulkan+enable-gpu');
-  assert.equal(video[video.indexOf('--delivery') + 1], 'libx265');
+test('Linux jobs select hardware Vulkan and VAAPI HEVC; stills keep delivery disabled', () => {
+  for (const pipeline of ['master', 'gpu', 'gpu-main10']) {
+    const video = exporterArgs({ ...base, platform: 'linux', spec: spec({ pipeline }) });
+    assert.equal(video[video.indexOf('--chrome') + 1], 'chromium+angle-vulkan+enable-gpu');
+    assert.equal(video[video.indexOf('--delivery') + 1], 'hevc_vaapi');
+  }
   const image = exporterArgs({ ...base, platform: 'linux', spec: spec({ format: 'png' }) });
   assert.equal(image[image.indexOf('--chrome') + 1], 'chromium+angle-vulkan+enable-gpu');
   assert.equal(image[image.indexOf('--delivery') + 1], 'none');
