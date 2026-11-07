@@ -7,9 +7,10 @@ export class SpecError extends Error {
   constructor(errors) { super(errors.join('; ')); this.name = 'SpecError'; this.errors = errors; this.fields = errors.map(fieldOf); }
 }
 
-export const SPEC_KEYS = ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'format'];
+export const SPEC_KEYS = ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'jobs', 'block_segments', 'format'];
 export const PIPELINES = ['master', 'gpu', 'gpu-main10', 'browser'];
 export const DELIVERY_KEYS = ['vt_bitrate', 'vt_quality'];
+export const MAX_JOBS = 8, MAX_BLOCK_SEGMENTS = 64;   // the exporter's own --jobs and --block-segments ranges
 const KEYS = SPEC_KEYS;
 
 // Every message starts with the field it is about ("seconds must be…", "quality.ss must be…") except two.
@@ -92,7 +93,7 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS, platform =
   if (size) spec.size = size; else errors.push(`size must be "1080p", "4k" or ${image ? 'a' : 'an even'} "WxH" between 64x64 and 7680x4320`);
 
   if (image) {
-    for (const k of ['seconds', 'fps', 'master', 'delivery', 'pipeline']) {
+    for (const k of ['seconds', 'fps', 'master', 'delivery', 'pipeline', 'jobs', 'block_segments']) {
       if (raw[k] !== undefined) errors.push(`${k} is a video option; omit it for PNG`);
     }
   } else {
@@ -118,6 +119,16 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS, platform =
     if (raw.pipeline !== undefined) {
       if (PIPELINES.includes(raw.pipeline)) spec.pipeline = raw.pipeline;
       else errors.push('pipeline must be master, gpu, gpu-main10 or browser');
+    }
+    // Parallel rendering: N Chromium sessions on one job's segments (the exporter's --jobs / --block-segments). Omitted stays omitted: older specs and their run keys are unchanged.
+    if (raw.jobs !== undefined) {
+      if (Number.isInteger(raw.jobs) && raw.jobs >= 1 && raw.jobs <= MAX_JOBS) spec.jobs = raw.jobs;
+      else errors.push(`jobs must be a whole number from 1 to ${MAX_JOBS}`);
+    }
+    if (raw.block_segments !== undefined) {
+      if (!(Number.isInteger(raw.block_segments) && raw.block_segments >= 1 && raw.block_segments <= MAX_BLOCK_SEGMENTS)) errors.push(`block_segments must be a whole number from 1 to ${MAX_BLOCK_SEGMENTS}`);
+      else if (!(raw.jobs > 1)) errors.push('block_segments only applies when jobs is above 1');
+      else spec.block_segments = raw.block_segments;
     }
     if (spec.pipeline && spec.pipeline !== 'master' && spec.master === true) errors.push('master must be false for a direct pipeline; only master retains lossless segments');
 

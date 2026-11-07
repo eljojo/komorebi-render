@@ -31,6 +31,18 @@ test('a playlist job passes --arboretum-playlist, and is a video job like any ot
   ]);
 });
 
+test('jobs above 1 reach the exporter as --jobs (and --block-segments); 1 or omitted adds nothing, so a serial job\'s argv is what it was', async () => {
+  const serial = exporterArgs({ ...base, spec: spec() });
+  assert.deepEqual(exporterArgs({ ...base, spec: spec({ jobs: 1 }) }), serial);
+  assert.ok(!serial.includes('--jobs') && !serial.includes('--block-segments'));
+  const par = exporterArgs({ ...base, spec: spec({ jobs: 3 }) });
+  assert.equal(par[par.indexOf('--jobs') + 1], '3');
+  assert.ok(!par.includes('--block-segments'));
+  const blocks = exporterArgs({ ...base, spec: spec({ jobs: 3, block_segments: 2 }) });
+  assert.equal(blocks[blocks.indexOf('--block-segments') + 1], '2');
+  assert.equal(blocks.at(-1), '--discard-master');   // the master-pipeline tail is still last: jobs sit beside the pipeline flags
+});
+
 test('an inline playlist is read from a file of ours beside the output, never from the exporter\'s own playlist.json', async () => {
   const args = exporterArgs({ ...base, spec: spec({ preset: undefined, playlist: { items: [{ params: {} }, { params: {} }] }, seconds: 30 }) });
   const i = args.indexOf('--playlist-json');

@@ -160,8 +160,25 @@ test('every refusal names the field it is about', () => {
 });
 
 test('the keys the validator knows are exported, for the docs that must list them', () => {
-  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'format']);
+  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'jobs', 'block_segments', 'format']);
   assert.deepEqual(DELIVERY_KEYS, ['vt_bitrate', 'vt_quality']);
+});
+
+test('jobs and block_segments: parallel rendering, whole numbers in the exporter\'s ranges, omitted stays omitted, video only', () => {
+  const base = { preset: '3', size: '1080p', seconds: 60 };
+  assert.equal('jobs' in ok(base), false);
+  assert.equal('block_segments' in ok(base), false);
+  assert.equal(ok({ ...base, jobs: 1 }).jobs, 1);
+  assert.equal(ok({ ...base, jobs: 8 }).jobs, 8);
+  for (const j of [0, 9, 1.5, '3', -1, null, NaN]) bad({ ...base, jobs: j }, /jobs must be a whole number from 1 to 8/);
+  const s = ok({ ...base, jobs: 3, block_segments: 2 });
+  assert.deepEqual([s.jobs, s.block_segments], [3, 2]);
+  assert.equal(ok({ ...base, jobs: 2, block_segments: 64 }).block_segments, 64);
+  for (const b of [0, 65, 2.5, '4']) bad({ ...base, jobs: 3, block_segments: b }, /block_segments must be a whole number from 1 to 64/);
+  bad({ ...base, block_segments: 2 }, /block_segments only applies when jobs is above 1/);
+  bad({ ...base, jobs: 1, block_segments: 2 }, /block_segments only applies when jobs is above 1/);
+  bad({ preset: '3', format: 'png', size: '512x512', jobs: 2 }, /jobs is a video option/);
+  bad({ preset: '3', format: 'png', size: '512x512', block_segments: 2 }, /block_segments is a video option/);
 });
 
 test('pipeline is optional for older specs and accepts the four export mechanisms independently of quality', () => {

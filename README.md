@@ -98,6 +98,7 @@ komorebi-render serve                  run the HTTP API and one worker together
 | `master` | `false` (default): the lossless segments are deleted once the delivery is verified. `true` keeps them. |
 | `quality` | `"authored"` (default: the look as saved), `"max"`, or an object (below). |
 | `pipeline` | `"master"` (default), `"gpu"`, `"gpu-main10"` or `"browser"`; capture and encoding, independent of quality. |
+| `jobs`, `block_segments` | Parallel rendering of one job: `jobs` 1 to 8 Chromium sessions at once on the job's 10-second segments (default 1), `block_segments` 1 to 64 consecutive segments per browser session (needs `jobs` above 1). Output is identical to a serial render; the exporter verifies each segment's end state and stops with a message to render with `jobs` 1 if it ever is not. Needs a komorebi pin whose exporter has `--jobs`. |
 | `delivery` | optional, one of `{ "vt_bitrate": "60M" }` (k, K or M) or `{ "vt_quality": 0..100 }`; browser requires omitted or empty delivery. |
 
 **Quality.** `"max"` is `tex_resolution` 4096, `bake_resolution` 0 (follows tex, so a 4096 bake) and `sample_count` 48; at 1080p
