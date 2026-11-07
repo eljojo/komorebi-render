@@ -18,7 +18,7 @@ const json = (status, body, headers = {}) => ({ status, headers: { 'content-type
 const text = (status, body) => ({ status, headers: { 'content-type': 'text/plain; charset=utf-8' }, body });
 
 // The name a job goes by: its playlist or preset (version kept, share token never) or its look's name.
-const nameOf = (spec) => (spec.playlist ? `playlist ${spec.playlist.replace(/:.+$/, '')}` : spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : spec.look.name ?? 'look');
+const nameOf = (spec) => (spec.playlist ? (typeof spec.playlist === 'string' ? `playlist ${spec.playlist.replace(/:.+$/, '')}` : spec.playlist.name ?? 'playlist') : spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : spec.look.name ?? 'look');
 
 function summary(job, now, token) {
   const v = jobView(job, now);

@@ -11,12 +11,14 @@ export const SEGMENT_SECONDS = 10;   // the exporter's --segment-seconds default
 // The look is passed from a file of ours, not from <folder>/look.json: the exporter rewrites that one as the look as
 // rendered, and a resume that finds different bytes in its --look-json refuses on a changed run key.
 export const LOOK_FILE = 'look-input.json';
+// Likewise a playlist carried in the job: the exporter writes playlist.json itself (what it rendered), so ours is another name.
+export const PLAYLIST_FILE = 'playlist-input.json';
 const TAIL_BYTES = 4096;
 
 export function exporterArgs({ script, commit, folder, spec, platform = process.platform }) {
   const q = resolveQuality(spec);
   const image = spec.format === 'png';
-  const args = [script, ...(spec.playlist ? ['--arboretum-playlist', spec.playlist] : spec.preset ? ['--arboretum', spec.preset] : ['--look-json', join(folder, LOOK_FILE)]),
+  const args = [script, ...(typeof spec.playlist === 'string' ? ['--arboretum-playlist', spec.playlist] : spec.playlist ? ['--playlist-json', join(folder, PLAYLIST_FILE)] : spec.preset ? ['--arboretum', spec.preset] : ['--look-json', join(folder, LOOK_FILE)]),
     '--commit', commit, '--out', folder, '--seconds', String(image ? 1 / 60 : spec.seconds), '--size', spec.size, '--fps', String(image ? 60 : spec.fps)];
   for (const k of QUALITY_KEYS) if (q.set[k] !== undefined) args.push('--set', `${k}=${q.set[k]}`);
   if (q.ss > 1) args.push('--ss', String(q.ss));

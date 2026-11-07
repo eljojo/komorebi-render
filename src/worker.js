@@ -4,7 +4,7 @@ import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { LOOK_FILE, exporterArgs, exporterCommand, finalizeImage, progress, readResult, tailLines } from './exporter.js';
+import { LOOK_FILE, PLAYLIST_FILE, exporterArgs, exporterCommand, finalizeImage, progress, readResult, tailLines } from './exporter.js';
 import { createOutputAccess, createOutputRootCheck } from './netmount.js';
 import { childEnv } from './engine.js';
 import { scrubSecrets } from './spec.js';
@@ -69,6 +69,7 @@ export function createWorker({
         await mkdir(folder, { recursive: true });
         signal.throwIfAborted();
         if (spec.look) await writeFile(join(folder, LOOK_FILE), JSON.stringify({ ...(spec.look.name ? { name: spec.look.name } : {}), params: spec.look.params }), { signal });
+        if (spec.playlist && typeof spec.playlist === 'object') await writeFile(join(folder, PLAYLIST_FILE), JSON.stringify(spec.playlist), { signal });
         const preset = /^(\d+)(:.*)?$/.exec(spec.preset ?? '');
         if (preset) {
           let key;
@@ -116,7 +117,7 @@ export function createWorker({
       });
       child.on('close', (code, signal) => { clear(); resolve({ code, signal }); });
       if (child.pid) store.setPid(id, child.pid);
-      log(`job ${id} started: ${spec.playlist ? `playlist ${spec.playlist.replace(/:.+$/, '')}` : spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.format === 'png' ? 'PNG' : `${spec.seconds}s @${spec.fps}`} (${job.quality.name} quality)`);
+      log(`job ${id} started: ${spec.playlist ? (typeof spec.playlist === 'string' ? `playlist ${spec.playlist.replace(/:.+$/, '')}` : `inline playlist (${spec.playlist.items.length} looks)`) : spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.format === 'png' ? 'PNG' : `${spec.seconds}s @${spec.fps}`} (${job.quality.name} quality)`);
       const tick = () => {
         if (closed) return;
         if (!killed && store.get(id).cancel_requested) requestTermination();

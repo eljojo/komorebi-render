@@ -89,7 +89,7 @@ komorebi-render serve                  run the HTTP API and one worker together
 | field | |
 |---|---|
 | `format` | `"mp4"` (default) or `"png"`. PNG renders one lossless RGB frame; omit the video-only seconds, fps, master, pipeline and delivery fields. |
-| `playlist` | `"<arboretum playlist id>[:share]"`. Exactly one of `preset`, `look` or `playlist`. The exporter walks the playlist's looks with `transitionTo` (dwell, then a fade over the next look's own crossfade, looping to fill `seconds`); the looks must share one grove. Needs a komorebi pin that has the exporter's `--arboretum-playlist`. Video only. |
+| `playlist` | `"<arboretum playlist id>[:share]"`, or an object `{ name?, items: [{ params, dwell_s?, crossfade_s? }] }` carried in the job (try a playlist before publishing it; nothing touches arboretum). Exactly one of `preset`, `look` or `playlist`. The exporter walks the playlist's looks with `transitionTo` (dwell, then a fade over the next look's own crossfade, looping to fill `seconds`); the looks must share one grove. Needs a komorebi pin that has the exporter's `--arboretum-playlist`. Video only. |
 | `preset` | `"<arboretum id>[@version][:share]"`. Exactly one of `preset`, `look` or `playlist`. Without `@version` the head is pinned at the first run. A private preset needs `ARBORETUM_TOKEN` in the worker's environment; `:share` opens an unlisted one. |
 | `look` | `{ "name"?: string, "params": {…} }`: the look's params, as the editor saves them. |
 | `size` | `"1080p"`, `"4k"` or `"WxH"` (64x64 to 7680x4320; video requires even dimensions). |

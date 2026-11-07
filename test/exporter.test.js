@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { exporterArgs, exporterCommand, progress, readResult, etaSeconds, LOOK_FILE } from '../src/exporter.js';
+import { exporterArgs, exporterCommand, progress, readResult, etaSeconds, LOOK_FILE, PLAYLIST_FILE } from '../src/exporter.js';
 
 const SHA = 'a6b6fa25a98d47fa8ae312b4bfae4c9fde99f849';
 const base = { script: '/e/test-gl/render-video.mjs', commit: SHA, folder: '/out/2026-10-10-1-preset-3', platform: 'darwin' };
@@ -29,6 +29,14 @@ test('a playlist job passes --arboretum-playlist, and is a video job like any ot
     '/e/test-gl/render-video.mjs', '--arboretum-playlist', '3:tok', '--commit', SHA, '--out', base.folder,
     '--seconds', '120', '--size', '1920x1080', '--fps', '60', '--discard-master',
   ]);
+});
+
+test('an inline playlist is read from a file of ours beside the output, never from the exporter\'s own playlist.json', async () => {
+  const args = exporterArgs({ ...base, spec: spec({ preset: undefined, playlist: { items: [{ params: {} }, { params: {} }] }, seconds: 30 }) });
+  const i = args.indexOf('--playlist-json');
+  assert.equal(args[i + 1], join(base.folder, PLAYLIST_FILE));
+  assert.ok(!args.includes('--arboretum-playlist') && !args.includes('--look-json') && !args.includes('--arboretum'));
+  assert.notEqual(PLAYLIST_FILE, 'playlist.json');   // the exporter writes playlist.json (what it rendered): reading it back would change the run key
 });
 
 test('a look job reads the look from a file beside the exporter output, never from look.json', async () => {

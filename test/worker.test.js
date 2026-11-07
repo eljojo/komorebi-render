@@ -213,6 +213,17 @@ test('a look job gets its look written beside the output and passed by file', as
   assert.deepEqual(JSON.parse(readFileSync(join(f, 'look-input.json'), 'utf8')).params, { sample_count: 8 });
 });
 
+test('an inline playlist gets written beside the output and passed by file', async () => {
+  const { store, worker } = rig();
+  const playlist = { name: 'Mine', items: [{ params: { exposure: 1 }, dwell_s: 1 }, { params: { exposure: 2 }, crossfade_s: 6 }] };
+  const j = submit(store, { preset: undefined, playlist });
+  await worker.runOnce();
+  const f = store.get(j.id).folder;
+  const { argv } = argvOf(f);
+  assert.equal(argv[argv.indexOf('--playlist-json') + 1], join(f, 'playlist-input.json'));
+  assert.deepEqual(JSON.parse(readFileSync(join(f, 'playlist-input.json'), 'utf8')), playlist);
+});
+
 test('max quality reaches the exporter as --set and --ss', async () => {
   const { store, worker } = rig();
   const j = submit(store, { quality: 'max' });

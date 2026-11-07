@@ -32,6 +32,35 @@ test('exactly one of preset, look and playlist', () => {
   bad({ look: { params: {} }, playlist: '3', size: '1080p', seconds: 5 }, /exactly one of preset, look or playlist/);
 });
 
+test('an inline playlist: two or more looks with optional times, normalised; the folder is its name; nothing in it is a secret', () => {
+  const p = { name: 'Rainbow Test', items: [{ params: { exposure: 1 }, name: 'a' }, { params: { exposure: 2 }, dwell_s: 1, crossfade_s: 6 }] };
+  const s = ok({ playlist: p, size: '1080p', seconds: 30 });
+  assert.deepEqual(s.playlist, p);
+  assert.equal(folderName({ id: 5, createdAt: '2026-10-10T00:00:00Z', spec: s }), '2026-10-10-5-rainbow-test');
+  assert.equal(folderName({ id: 6, createdAt: '2026-10-10T00:00:00Z', spec: ok({ playlist: { items: p.items }, size: '1080p', seconds: 30 }) }), '2026-10-10-6-playlist');
+  assert.deepEqual(redactSpec(s).playlist, p);
+  assert.equal(scrubSecrets('x', s, 'tok'), 'x');
+});
+
+test('an inline playlist is refused when it cannot be played: fewer than two looks, bad fields, times arboretum refuses, a fraction of a frame', () => {
+  const two = [{ params: {} }, { params: {} }];
+  const t = (p, re, extra = {}) => bad({ playlist: p, size: '1080p', seconds: 30, ...extra }, re);
+  t({ items: [{ params: {} }] }, /playlist\.items must be a list of 2 to 500/);
+  t({}, /playlist\.items must be a list/);
+  t({ items: two, colour: 1 }, /playlist\.colour is not a playlist field/);
+  t({ name: '', items: two }, /playlist\.name/);
+  t({ items: [{ params: {} }, 3] }, /playlist\.items\[1\] must be an object/);
+  t({ items: [{ params: {} }, {}] }, /playlist\.items\[1\]\.params must be an object/);
+  t({ items: [{ params: {} }, { params: [] }] }, /playlist\.items\[1\]\.params must be an object/);
+  t({ items: [{ params: {}, speed: 2 }, { params: {} }] }, /playlist\.items\[0\]\.speed is not a playlist item field/);
+  t({ items: [{ params: {}, dwell_s: 0.5 }, { params: {} }] }, /dwell_s must be a number from 1 to 3600/);
+  t({ items: [{ params: {} }, { params: {}, crossfade_s: 121 }] }, /crossfade_s must be a number from 0 to 120/);
+  t({ items: [{ params: {}, dwell_s: 1.01 }, { params: {} }] }, /dwell_s x 60 fps must be a whole number of frames/);
+  ok({ playlist: { items: [{ params: {}, dwell_s: 1.5 }, { params: {} }] }, size: '1080p', seconds: 30, fps: 30 });   // 45 frames at 30 fps
+  t({ items: two }, /playlist is a video option/, { format: 'png', size: '512x512', seconds: undefined });
+  t(7, /playlist must look like/);
+});
+
 test('a playlist job: <id>[:share] and nothing else, video only, with a folder and a redaction of its own', () => {
   assert.deepEqual(ok({ playlist: '3', size: '1080p', seconds: 120 }), { playlist: '3', size: '1920x1080', seconds: 120, fps: 60, master: false, quality: 'authored' });
   for (const p of ['3', '12:tok-en_9']) assert.equal(ok({ playlist: p, size: '1080p', seconds: 5 }).playlist, p);

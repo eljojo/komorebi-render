@@ -22,9 +22,35 @@ function fieldOf(message) {
 }
 const PRESET = /^([1-9]\d*)(?:@([1-9]\d*))?(?::(\S+))?$/;   // the exporter's own --arboretum grammar
 const PLAYLIST = /^([1-9]\d*)(?::(\S+))?$/;   // and its --arboretum-playlist: a playlist has no versions
+const PLAYLIST_FIELDS = ['name', 'items'], ITEM_FIELDS = ['name', 'params', 'dwell_s', 'crossfade_s'];
+const MAX_PLAYLIST_ITEMS = 500;   // arboretum's own limit
 const BITRATE = /^[1-9]\d*(\.\d+)?[kKM]$/;   // ffmpeg reads a lowercase m as milli
 const SIZES = { '1080p': '1920x1080', '4k': '3840x2160' };
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// A playlist carried in the job instead of read from arboretum: [{ params, dwell_s?, crossfade_s? }], played as arboretum plays one. Omitted times stay omitted (the exporter's
+// defaults are arboretum's: 30 s and 5 s). Returns the normalised object, or null with the errors pushed.
+function checkInlinePlaylist(p, errors) {
+  const before = errors.length, out = {};
+  for (const k of Object.keys(p)) if (!PLAYLIST_FIELDS.includes(k)) errors.push(`playlist.${k} is not a playlist field; allowed: ${PLAYLIST_FIELDS.join(', ')}`);
+  if (p.name !== undefined) {
+    if (typeof p.name === 'string' && p.name.length >= 1 && p.name.length <= 80) out.name = p.name;
+    else errors.push('playlist.name must be a string of 1 to 80 characters');
+  }
+  if (!Array.isArray(p.items) || p.items.length < 2 || p.items.length > MAX_PLAYLIST_ITEMS) { errors.push(`playlist.items must be a list of 2 to ${MAX_PLAYLIST_ITEMS} looks`); return null; }
+  out.items = p.items.map((it, i) => {
+    const at = `playlist.items[${i}]`;
+    if (!isObject(it)) { errors.push(`${at} must be an object`); return null; }
+    const item = {};
+    for (const k of Object.keys(it)) if (!ITEM_FIELDS.includes(k)) errors.push(`${at}.${k} is not a playlist item field; allowed: ${ITEM_FIELDS.join(', ')}`);
+    if (!isObject(it.params)) errors.push(`${at}.params must be an object`); else item.params = it.params;
+    if (it.name !== undefined) { if (typeof it.name === 'string') item.name = it.name; else errors.push(`${at}.name must be a string`); }
+    if (it.dwell_s !== undefined) { if (Number.isFinite(it.dwell_s) && it.dwell_s >= 1 && it.dwell_s <= 3600) item.dwell_s = it.dwell_s; else errors.push(`${at}.dwell_s must be a number from 1 to 3600`); }
+    if (it.crossfade_s !== undefined) { if (Number.isFinite(it.crossfade_s) && it.crossfade_s >= 0 && it.crossfade_s <= 120) item.crossfade_s = it.crossfade_s; else errors.push(`${at}.crossfade_s must be a number from 0 to 120`); }
+    return item;
+  });
+  return errors.length === before ? out : null;
+}
 
 function parseSize(s, image = false) {
   if (typeof s === 'string' && Object.hasOwn(SIZES, s)) return SIZES[s];
@@ -49,7 +75,8 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS, platform =
   if (hasPlaylist) {
     if (image) errors.push('playlist is a video option: a PNG is one frame of one look');
     else if (typeof raw.playlist === 'string' && PLAYLIST.test(raw.playlist)) spec.playlist = raw.playlist;
-    else errors.push('playlist must look like "<id>[:share]", e.g. "3" or "3:token"');
+    else if (isObject(raw.playlist)) { const p = checkInlinePlaylist(raw.playlist, errors); if (p) spec.playlist = p; }
+    else errors.push('playlist must look like "<id>[:share]" (e.g. "3" or "3:token") or be an object { name?, items: [{ params, dwell_s?, crossfade_s? }] }');
   }
   if (hasPreset) {
     if (typeof raw.preset === 'string' && PRESET.test(raw.preset)) spec.preset = raw.preset;
@@ -75,6 +102,13 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS, platform =
     if (raw.fps === undefined) spec.fps = 60;
     else if (raw.fps === 30 || raw.fps === 60) spec.fps = raw.fps;
     else errors.push('fps must be 30 or 60');
+
+    // the exporter schedules in whole frames: refuse here, not an hour into the queue
+    if (spec.playlist && typeof spec.playlist === 'object') {
+      spec.playlist.items.forEach((it, i) => {
+        for (const k of ['dwell_s', 'crossfade_s']) if (it[k] !== undefined && Math.abs(it[k] * spec.fps - Math.round(it[k] * spec.fps)) > 1e-9) errors.push(`playlist.items[${i}].${k} x ${spec.fps} fps must be a whole number of frames`);
+      });
+    }
 
     if (raw.master === undefined) spec.master = false;
     else if (typeof raw.master === 'boolean') spec.master = raw.master;
@@ -129,17 +163,17 @@ export function slugify(s) {
 
 // <yyyy-mm-dd>-<id>-<slug>. Only the preset's (or playlist's) id is slugged: the version and the share token stay out of a folder name.
 export function folderName({ id, createdAt, spec }) {
-  const slug = spec.playlist ? `playlist-${spec.playlist.split(':')[0]}` : spec.preset ? `preset-${spec.preset.split(/[@:]/)[0]}` : slugify(spec.look.name ?? 'look');
+  const slug = typeof spec.playlist === 'string' ? `playlist-${spec.playlist.split(':')[0]}` : spec.playlist ? slugify(spec.playlist.name ?? 'playlist') : spec.preset ? `preset-${spec.preset.split(/[@:]/)[0]}` : slugify(spec.look.name ?? 'look');
   return `${createdAt.slice(0, 10)}-${id}-${slug}`;
 }
 
 // The share token is a credential: it is stored (the exporter needs it to resume) but never shown.
-export const redactSpec = (spec) => ({ ...spec, ...(spec.preset ? { preset: spec.preset.replace(/:.+$/, ':…') } : {}), ...(spec.playlist ? { playlist: spec.playlist.replace(/:.+$/, ':…') } : {}) });
+export const redactSpec = (spec) => ({ ...spec, ...(spec.preset ? { preset: spec.preset.replace(/:.+$/, ':…') } : {}), ...(typeof spec.playlist === 'string' ? { playlist: spec.playlist.replace(/:.+$/, ':…') } : {}) });
 
 // Hides the arboretum token and the preset's share token in text that may carry them (the exporter's output, a log line).
 export function scrubSecrets(text, spec, token) {
   let t = String(text);
-  const shares = [spec.preset?.split(':')[1], spec.playlist?.split(':')[1]];
+  const shares = [spec.preset?.split(':')[1], typeof spec.playlist === 'string' ? spec.playlist.split(':')[1] : undefined];
   for (const secret of [token, ...shares]) if (secret) t = t.split(secret).join('***');
   return t;
 }
