@@ -52,7 +52,7 @@ test('a bad maximum is refused at startup, not at the first job', () => {
 test('the pin is a full sha', () => {
   const pin = loadPin();
   assert.match(pin.commit, /^[0-9a-f]{40}$/);
-  assert.equal(pin.commit, '058cbff9b52db2951f0dffbc80263a4d5dc7da47');
+  assert.equal(pin.commit, '54bd00655a0dcca39b1c30ab8f62f734e4c250fa');
   assert.match(pin.repo, /^https:\/\/github\.com\/eljojo\/komorebi/);
 });
 
