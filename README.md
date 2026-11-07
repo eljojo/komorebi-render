@@ -7,7 +7,7 @@ It does not render anything itself. It runs komorebi's own video exporter (`test
 komorebi commit** (`komorebi.json`), so there is one definition of a render. What it adds is a queue, a worker, progress,
 resume after a crash, and the guard that keeps gigabytes off the Mac's own disk.
 
-- Single looks only (an arboretum preset, or look params). One job at a time.
+- One look (an arboretum preset, or look params) or one arboretum playlist per job, rendered as a single continuous video with the engine's own transitions between looks. One job at a time.
 - Output goes to `$KOMOREBI_RENDER_OUT`, which must be a mounted network share (on the mini, `/Volumes/home/komorebi/jobs`).
 - Masters (the lossless segments) are off by default: they are deleted once the delivery is verified.
 - Hours-long jobs are normal: the maximum is 6 h by default (`KOMOREBI_RENDER_MAX_SECONDS`).
@@ -89,7 +89,8 @@ komorebi-render serve                  run the HTTP API and one worker together
 | field | |
 |---|---|
 | `format` | `"mp4"` (default) or `"png"`. PNG renders one lossless RGB frame; omit the video-only seconds, fps, master, pipeline and delivery fields. |
-| `preset` | `"<arboretum id>[@version][:share]"`. Exactly one of `preset` or `look`. Without `@version` the head is pinned at the first run. A private preset needs `ARBORETUM_TOKEN` in the worker's environment; `:share` opens an unlisted one. |
+| `playlist` | `"<arboretum playlist id>[:share]"`. Exactly one of `preset`, `look` or `playlist`. The exporter walks the playlist's looks with `transitionTo` (dwell, then a fade over the next look's own crossfade, looping to fill `seconds`); the looks must share one grove. Needs a komorebi pin that has the exporter's `--arboretum-playlist`. Video only. |
+| `preset` | `"<arboretum id>[@version][:share]"`. Exactly one of `preset`, `look` or `playlist`. Without `@version` the head is pinned at the first run. A private preset needs `ARBORETUM_TOKEN` in the worker's environment; `:share` opens an unlisted one. |
 | `look` | `{ "name"?: string, "params": {…} }`: the look's params, as the editor saves them. |
 | `size` | `"1080p"`, `"4k"` or `"WxH"` (64x64 to 7680x4320; video requires even dimensions). |
 | `seconds` | Video only: whole number, 1 to `KOMOREBI_RENDER_MAX_SECONDS` (default 21600). |

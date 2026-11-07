@@ -16,7 +16,7 @@ const TAIL_BYTES = 4096;
 export function exporterArgs({ script, commit, folder, spec, platform = process.platform }) {
   const q = resolveQuality(spec);
   const image = spec.format === 'png';
-  const args = [script, ...(spec.preset ? ['--arboretum', spec.preset] : ['--look-json', join(folder, LOOK_FILE)]),
+  const args = [script, ...(spec.playlist ? ['--arboretum-playlist', spec.playlist] : spec.preset ? ['--arboretum', spec.preset] : ['--look-json', join(folder, LOOK_FILE)]),
     '--commit', commit, '--out', folder, '--seconds', String(image ? 1 / 60 : spec.seconds), '--size', spec.size, '--fps', String(image ? 60 : spec.fps)];
   for (const k of QUALITY_KEYS) if (q.set[k] !== undefined) args.push('--set', `${k}=${q.set[k]}`);
   if (q.ss > 1) args.push('--ss', String(q.ss));

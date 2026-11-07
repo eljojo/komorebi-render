@@ -13,14 +13,15 @@ controls remain Mac-only; a Linux host refuses them with 422 at submit.
 
 ## Job spec
 
-POST the spec itself, without a wrapper. Exactly one of `preset` or `look` and `size` are required; `seconds` is required only for video.
+POST the spec itself, without a wrapper. Exactly one of `preset`, `look` or `playlist` and `size` are required; `seconds` is required only for video.
 Unknown top-level fields are refused. Defaults apply to omitted optional fields.
 
 | Field | Limits and default |
 | --- | --- |
 | `format` | mp4 (default) or png. PNG renders one lossless RGB frame. Omit video-only seconds, fps, master, pipeline and delivery on PNG jobs; they are refused. |
 | `preset` | String `<positive id>[@positive version][:share]`, such as `3`, `3@2` or `3:share`. Without a version, the exporter pins the head on first run. A share token opens an unlisted preset and is redacted in responses. Private presets need the worker's ARBORETUM_TOKEN or KOMOREBI_RENDER_ARBORETUM_TOKEN_FILE. |
-| `look` | Object with `look.params` and optional `look.name`; exactly one of preset or look. |
+| `look` | Object with `look.params` and optional `look.name`; exactly one of preset, look or playlist. |
+| `playlist` | String `<positive id>[:share]`, such as `3` or `3:share`: an arboretum playlist rendered as ONE continuous video, video only. The engine walks its looks in order with transitionTo, as arboretum plays one: the first look is simply there for its dwell, then each next look is faded in over its own crossfade and its dwell counts from its landing, looping to fill `seconds`. The result is the live morph, not a dissolve of finished pictures. Its looks must share one grove (seed, branching, resolutions, scene mode); a playlist that changes structure is refused by the exporter before any frame. Playlists are not versioned: the exporter pins each item's params in the run key, so editing the playlist while a job runs makes a resumed job refuse. Private playlists need the worker's ARBORETUM_TOKEN; `:share` opens an unlisted one. |
 | `look.params` | An object of editor params, as saved by komorebi. Required for a look job. |
 | `look.name` | Optional string; unnamed looks are called `look`. |
 | `size` | `1080p`, `4k`, or `WxH` from 64x64 through 7680x4320 (even dimensions for video). Aliases normalize to 1920x1080 and 3840x2160. No default. |
@@ -116,6 +117,10 @@ Short planning test:
 Preset example:
 ```json spec
 {"preset":"3@2","size":"1080p","seconds":30}
+```
+Playlist example (two minutes of an arboretum playlist, 1080p):
+```json spec
+{"playlist":"3","size":"1080p","seconds":120}
 ```
 Look example:
 ```json spec

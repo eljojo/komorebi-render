@@ -116,7 +116,7 @@ export function createWorker({
       });
       child.on('close', (code, signal) => { clear(); resolve({ code, signal }); });
       if (child.pid) store.setPid(id, child.pid);
-      log(`job ${id} started: ${spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.format === 'png' ? 'PNG' : `${spec.seconds}s @${spec.fps}`} (${job.quality.name} quality)`);
+      log(`job ${id} started: ${spec.playlist ? `playlist ${spec.playlist.replace(/:.+$/, '')}` : spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : 'look'} ${spec.size} ${spec.format === 'png' ? 'PNG' : `${spec.seconds}s @${spec.fps}`} (${job.quality.name} quality)`);
       const tick = () => {
         if (closed) return;
         if (!killed && store.get(id).cancel_requested) requestTermination();

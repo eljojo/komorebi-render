@@ -25,9 +25,22 @@ test('preset accepts id, @version and :share, and nothing else', () => {
   for (const p of ['0', 'x', '3@', '3 4', '', '@2', '3@0', 3]) bad({ preset: p, size: '1080p', seconds: 5 }, /preset/);
 });
 
-test('exactly one of preset and look', () => {
-  bad({ size: '1080p', seconds: 5 }, /exactly one of preset or look/);
-  bad({ preset: '3', look: { params: {} }, size: '1080p', seconds: 5 }, /exactly one of preset or look/);
+test('exactly one of preset, look and playlist', () => {
+  bad({ size: '1080p', seconds: 5 }, /exactly one of preset, look or playlist/);
+  bad({ preset: '3', look: { params: {} }, size: '1080p', seconds: 5 }, /exactly one of preset, look or playlist/);
+  bad({ preset: '3', playlist: '3', size: '1080p', seconds: 5 }, /exactly one of preset, look or playlist/);
+  bad({ look: { params: {} }, playlist: '3', size: '1080p', seconds: 5 }, /exactly one of preset, look or playlist/);
+});
+
+test('a playlist job: <id>[:share] and nothing else, video only, with a folder and a redaction of its own', () => {
+  assert.deepEqual(ok({ playlist: '3', size: '1080p', seconds: 120 }), { playlist: '3', size: '1920x1080', seconds: 120, fps: 60, master: false, quality: 'authored' });
+  for (const p of ['3', '12:tok-en_9']) assert.equal(ok({ playlist: p, size: '1080p', seconds: 5 }).playlist, p);
+  for (const p of ['0', 'x', '3@2', '3@2:tok', '', 3, '3 4']) bad({ playlist: p, size: '1080p', seconds: 5 }, /playlist/);
+  bad({ playlist: '3', format: 'png', size: '512x512' }, /playlist is a video option/);
+  const spec = ok({ playlist: '3:s3cr3t', size: '1080p', seconds: 5 });
+  assert.equal(folderName({ id: 4, createdAt: '2026-10-10T00:00:00Z', spec }), '2026-10-10-4-playlist-3');
+  assert.equal(redactSpec(spec).playlist, '3:…');
+  assert.equal(scrubSecrets('GET /api/playlists/3?k=s3cr3t with arbTOK', spec, 'arbTOK'), 'GET /api/playlists/3?k=*** with ***');
 });
 
 test('a look carries params, and may carry a name', () => {
@@ -118,7 +131,7 @@ test('every refusal names the field it is about', () => {
 });
 
 test('the keys the validator knows are exported, for the docs that must list them', () => {
-  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'format']);
+  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'format']);
   assert.deepEqual(DELIVERY_KEYS, ['vt_bitrate', 'vt_quality']);
 });
 

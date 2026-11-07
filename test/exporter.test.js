@@ -24,6 +24,13 @@ test('a preset job: the exporter argv, with --discard-master unless a master is 
   assert.ok(!exporterArgs({ ...base, spec: spec({ master: true }) }).includes('--discard-master'));
 });
 
+test('a playlist job passes --arboretum-playlist, and is a video job like any other', async () => {
+  assert.deepEqual(exporterArgs({ ...base, spec: spec({ preset: undefined, playlist: '3:tok', seconds: 120 }) }), [
+    '/e/test-gl/render-video.mjs', '--arboretum-playlist', '3:tok', '--commit', SHA, '--out', base.folder,
+    '--seconds', '120', '--size', '1920x1080', '--fps', '60', '--discard-master',
+  ]);
+});
+
 test('a look job reads the look from a file beside the exporter output, never from look.json', async () => {
   const args = exporterArgs({ ...base, spec: { look: { params: { a: 1 } }, size: '3840x2160', seconds: 10, fps: 30, master: true } });
   const i = args.indexOf('--look-json');

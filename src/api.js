@@ -17,8 +17,8 @@ const LLMS = new URL('../llms.txt', import.meta.url);
 const json = (status, body, headers = {}) => ({ status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers }, body: `${JSON.stringify(body, null, 2)}\n` });
 const text = (status, body) => ({ status, headers: { 'content-type': 'text/plain; charset=utf-8' }, body });
 
-// The name a job goes by: its preset (version kept, share token never) or its look's name.
-const nameOf = (spec) => (spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : spec.look.name ?? 'look');
+// The name a job goes by: its playlist or preset (version kept, share token never) or its look's name.
+const nameOf = (spec) => (spec.playlist ? `playlist ${spec.playlist.replace(/:.+$/, '')}` : spec.preset ? `preset ${spec.preset.replace(/:.+$/, '')}` : spec.look.name ?? 'look');
 
 function summary(job, now, token) {
   const v = jobView(job, now);
@@ -37,7 +37,7 @@ function post({ store, config }, _params, { body }) {
   let spec;
   try { spec = validateSpec(raw, { maxSeconds: config.maxSeconds }); } catch (e) {
     if (!(e instanceof SpecError)) throw e;
-    const scrub = (value) => value === null ? null : scrubSecrets(value, { preset: typeof raw?.preset === 'string' ? raw.preset : undefined }, config.token);
+    const scrub = (value) => value === null ? null : scrubSecrets(value, { preset: typeof raw?.preset === 'string' ? raw.preset : undefined, playlist: typeof raw?.playlist === 'string' ? raw.playlist : undefined }, config.token);
     return json(422, { error: scrub(e.errors[0]), field: scrub(e.fields[0]), errors: e.errors.map((error, i) => ({ field: scrub(e.fields[i]), error: scrub(error) })) });
   }
   const job = store.create(spec);

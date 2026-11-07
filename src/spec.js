@@ -7,7 +7,7 @@ export class SpecError extends Error {
   constructor(errors) { super(errors.join('; ')); this.name = 'SpecError'; this.errors = errors; this.fields = errors.map(fieldOf); }
 }
 
-export const SPEC_KEYS = ['preset', 'look', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'format'];
+export const SPEC_KEYS = ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'format'];
 export const PIPELINES = ['master', 'gpu', 'gpu-main10', 'browser'];
 export const DELIVERY_KEYS = ['vt_bitrate', 'vt_quality'];
 const KEYS = SPEC_KEYS;
@@ -16,11 +16,12 @@ const KEYS = SPEC_KEYS;
 function fieldOf(message) {
   const unknown = /^unknown key "(.*)"$/.exec(message);
   if (unknown) return unknown[1];
-  if (message.startsWith('exactly one of preset or look')) return 'preset';
+  if (message.startsWith('exactly one of preset, look or playlist')) return 'preset';
   const m = /^((?:look|delivery|quality)\.\w+|\w+)/.exec(message);
   return m && (KEYS.includes(m[1].split('.')[0])) ? m[1] : null;
 }
 const PRESET = /^([1-9]\d*)(?:@([1-9]\d*))?(?::(\S+))?$/;   // the exporter's own --arboretum grammar
+const PLAYLIST = /^([1-9]\d*)(?::(\S+))?$/;   // and its --arboretum-playlist: a playlist has no versions
 const BITRATE = /^[1-9]\d*(\.\d+)?[kKM]$/;   // ffmpeg reads a lowercase m as milli
 const SIZES = { '1080p': '1920x1080', '4k': '3840x2160' };
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -43,8 +44,13 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS, platform =
   if (raw.format !== undefined && !['png', 'mp4'].includes(raw.format)) errors.push('format must be png or mp4');
   if (image) spec.format = 'png';
 
-  const hasPreset = raw.preset !== undefined, hasLook = raw.look !== undefined;
-  if (hasPreset === hasLook) errors.push('exactly one of preset or look is required');
+  const hasPreset = raw.preset !== undefined, hasLook = raw.look !== undefined, hasPlaylist = raw.playlist !== undefined;
+  if (Number(hasPreset) + Number(hasLook) + Number(hasPlaylist) !== 1) errors.push('exactly one of preset, look or playlist is required');
+  if (hasPlaylist) {
+    if (image) errors.push('playlist is a video option: a PNG is one frame of one look');
+    else if (typeof raw.playlist === 'string' && PLAYLIST.test(raw.playlist)) spec.playlist = raw.playlist;
+    else errors.push('playlist must look like "<id>[:share]", e.g. "3" or "3:token"');
+  }
   if (hasPreset) {
     if (typeof raw.preset === 'string' && PRESET.test(raw.preset)) spec.preset = raw.preset;
     else errors.push('preset must look like "<id>[@version][:share]", e.g. "3", "3@2" or "3:token"');
@@ -121,19 +127,19 @@ export function slugify(s) {
   return slug || 'look';
 }
 
-// <yyyy-mm-dd>-<id>-<slug>. Only the preset's id is slugged: the version and the share token stay out of a folder name.
+// <yyyy-mm-dd>-<id>-<slug>. Only the preset's (or playlist's) id is slugged: the version and the share token stay out of a folder name.
 export function folderName({ id, createdAt, spec }) {
-  const slug = spec.preset ? `preset-${spec.preset.split(/[@:]/)[0]}` : slugify(spec.look.name ?? 'look');
+  const slug = spec.playlist ? `playlist-${spec.playlist.split(':')[0]}` : spec.preset ? `preset-${spec.preset.split(/[@:]/)[0]}` : slugify(spec.look.name ?? 'look');
   return `${createdAt.slice(0, 10)}-${id}-${slug}`;
 }
 
 // The share token is a credential: it is stored (the exporter needs it to resume) but never shown.
-export const redactSpec = (spec) => (spec.preset ? { ...spec, preset: spec.preset.replace(/:.+$/, ':…') } : spec);
+export const redactSpec = (spec) => ({ ...spec, ...(spec.preset ? { preset: spec.preset.replace(/:.+$/, ':…') } : {}), ...(spec.playlist ? { playlist: spec.playlist.replace(/:.+$/, ':…') } : {}) });
 
 // Hides the arboretum token and the preset's share token in text that may carry them (the exporter's output, a log line).
 export function scrubSecrets(text, spec, token) {
   let t = String(text);
-  const share = spec.preset?.split(':')[1];
-  for (const secret of [token, share]) if (secret) t = t.split(secret).join('***');
+  const shares = [spec.preset?.split(':')[1], spec.playlist?.split(':')[1]];
+  for (const secret of [token, ...shares]) if (secret) t = t.split(secret).join('***');
   return t;
 }
