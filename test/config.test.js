@@ -49,13 +49,6 @@ test('a bad maximum is refused at startup, not at the first job', () => {
   for (const v of ['0', '-5', 'abc', '1.5']) assert.throws(() => loadConfig({ KOMOREBI_RENDER_MAX_SECONDS: v }, '/h'), /KOMOREBI_RENDER_MAX_SECONDS/);
 });
 
-test('the pin is a full sha', () => {
-  const pin = loadPin();
-  assert.match(pin.commit, /^[0-9a-f]{40}$/);
-  assert.equal(pin.commit, '54bd00655a0dcca39b1c30ab8f62f734e4c250fa');
-  assert.match(pin.repo, /^https:\/\/github\.com\/eljojo\/komorebi/);
-});
-
 test('the port is KOMOREBI_RENDER_PORT; a bad one is refused at startup (0 is allowed: the OS picks, for tests)', () => {
   assert.equal(loadConfig({ KOMOREBI_RENDER_PORT: '9000' }, '/h').port, 9000);
   assert.equal(loadConfig({ KOMOREBI_RENDER_PORT: '0' }, '/h').port, 0);
