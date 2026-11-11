@@ -1,6 +1,6 @@
 {
   "repo": "https://github.com/eljojo/komorebi",
-  "commit": "7db9f06d2a38f5ec9e881ca72b9faf5512068048",
+  "commit": "8cd2e80b6ff79f72b92dda87f86eb57ed4fd97d5",
   "playwright": "1.63.0",
   "sessions": {
     "quality": [
