@@ -1,6 +1,9 @@
 // The quality knobs a job may set, and what they cost. Only the exporter's own QUALITY_KEYS (render-video.mjs) may ever
 // be passed as --set: they keep the look "as authored" in its manifest. Any other key would change the look, so nothing
 // here can name one.
+import { readFileSync } from 'node:fs';
+const pin=JSON.parse(readFileSync(new URL('../komorebi.json',import.meta.url),'utf8'));
+export const SESSION_PROFILES=pin.sessions ?? {quality:[],presentation:[]};
 export const QUALITY_KEYS = ['tex_resolution', 'bake_resolution', 'sample_count'];
 const CHOICES = {
   tex_resolution: [1024, 2048, 4096],
@@ -41,7 +44,8 @@ const sizeOf = (size) => size.split('x').map(Number);
 
 // { name, set, ss }: `set` is exactly the --set pairs, `ss` the --ss factor (1 passes no flag).
 // "max" supersamples 2x only when the output is 1080p or smaller: at 4K the render is already the size it costs.
-export function resolveQuality({ size, quality = 'authored' }) {
+export function resolveQuality({ size, quality = 'authored', session, ss }) {
+  if(session)return {name:`session:${session.quality??'export'}`,set:{},ss:ss??1};
   if (quality === 'authored') return { name: 'authored', set: {}, ss: 1 };
   const [w, h] = sizeOf(size);
   if (quality === 'max') return { name: 'max', set: { ...MAX_SET }, ss: w <= FULL_HD[0] && h <= FULL_HD[1] ? 2 : 1 };
@@ -58,9 +62,10 @@ const authoredMs = (px) => {
   if (px >= PX_4K) return Math.round(37 * (px / PX_4K));
   return Math.round(15 + (22 * (px - PX_HD)) / (PX_4K - PX_HD));
 };
-export function msPerFrame({ size, quality }) {
-  const r = resolveQuality({ size, quality });
-  if (r.name === 'max' || r.set.tex_resolution === 4096) return 300;
+export function msPerFrame(spec) {
+  const {size}=spec,r=resolveQuality(spec);
+  // Until profiles are calibrated, high/export use the existing conservative max-quality estimate.
+  if (r.name === 'max' || r.set.tex_resolution === 4096 || ['session:high','session:export'].includes(r.name)) return 300;
   const [w, h] = sizeOf(size);
   return authoredMs(w * h * r.ss * r.ss);
 }

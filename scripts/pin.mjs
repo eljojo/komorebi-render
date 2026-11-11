@@ -14,5 +14,18 @@ const sha = await resolveCommit({ config, pin, ref: process.argv[2] ?? 'HEAD' })
 // the flake's playwright check compares this to nixpkgs' playwright-driver.
 const engine = JSON.parse(execFileSync('git', ['-C', config.mirror, 'show', `${sha}:test-gl/package.json`], { encoding: 'utf8' }));
 const next = { ...JSON.parse(readFileSync(file, 'utf8')), commit: sha, playwright: engine.dependencies.playwright };
+const {mkdtempSync,rmSync,existsSync}=await import('node:fs');
+const {tmpdir}=await import('node:os');
+const {join}=await import('node:path');
+const {pathToFileURL}=await import('node:url');
+const stage=mkdtempSync(join(tmpdir(),'komorebi-render-profiles-'));
+try{
+  const archive=execFileSync('git',['-C',config.mirror,'archive',sha],{maxBuffer:1<<30});
+  execFileSync('tar',['-x','-C',stage],{input:archive});
+  if(existsSync(join(stage,'komorebi-session.js'))){
+    const {QUALITY_PROFILES,PRESENTATION_PROFILES}=await import(pathToFileURL(join(stage,'komorebi-session.js')).href);
+    next.sessions={quality:Object.keys(QUALITY_PROFILES),presentation:Object.keys(PRESENTATION_PROFILES)};
+  }else delete next.sessions;
+}finally{rmSync(stage,{recursive:true,force:true});}
 writeFileSync(file, `${JSON.stringify(next, null, 2)}\n`);
 console.log(sha === pin.commit ? `already pinned to ${sha}` : `pinned ${pin.commit.slice(0, 12)} -> ${sha}`);

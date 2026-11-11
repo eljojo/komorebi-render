@@ -4,7 +4,7 @@ import { spawn as nodeSpawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { LOOK_FILE, PLAYLIST_FILE, exporterArgs, exporterCommand, finalizeImage, progress, readResult, tailLines } from './exporter.js';
+import { LOOK_FILE, PLAYLIST_FILE, SESSION_FILE, exporterArgs, exporterCommand, finalizeImage, progress, readResult, tailLines } from './exporter.js';
 import { createOutputAccess, createOutputRootCheck } from './netmount.js';
 import { childEnv } from './engine.js';
 import { scrubSecrets } from './spec.js';
@@ -70,6 +70,7 @@ export function createWorker({
         signal.throwIfAborted();
         if (spec.look) await writeFile(join(folder, LOOK_FILE), JSON.stringify({ ...(spec.look.name ? { name: spec.look.name } : {}), params: spec.look.params }), { signal });
         if (spec.playlist && typeof spec.playlist === 'object') await writeFile(join(folder, PLAYLIST_FILE), JSON.stringify(spec.playlist), { signal });
+        if(spec.session)await writeFile(join(folder,SESSION_FILE),JSON.stringify(spec.session),{signal});
         const preset = /^(\d+)(:.*)?$/.exec(spec.preset ?? '');
         if (preset) {
           let key;

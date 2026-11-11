@@ -160,7 +160,7 @@ test('every refusal names the field it is about', () => {
 });
 
 test('the keys the validator knows are exported, for the docs that must list them', () => {
-  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'jobs', 'block_segments', 'format']);
+  assert.deepEqual(SPEC_KEYS, ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'session', 'ss', 'pipeline', 'jobs', 'block_segments', 'format']);
   assert.deepEqual(DELIVERY_KEYS, ['vt_bitrate', 'vt_quality']);
 });
 

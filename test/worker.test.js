@@ -35,6 +35,17 @@ const submit = (store, raw) => store.create(validateSpec({ size: '1080p', second
 const until = async (fn, ms = 5000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
 const argvOf = (folder) => JSON.parse(readFileSync(join(folder, 'argv.json'), 'utf8'));
 
+test('session jobs pass a separate immutable input file to the exporter',async()=>{
+  const {store,worker}=rig();
+  const job=submit(store,{session:{quality:'balanced',presentation:'projector'},ss:2});
+  const result=await worker.runOnce();
+  assert.equal(result.outcome,'done');
+  const finished=store.get(job.id),args=argvOf(finished.folder).argv;
+  const sessionPath=args[args.indexOf('--session-json')+1];
+  assert.deepEqual(JSON.parse(readFileSync(sessionPath,'utf8')),{quality:'balanced',presentation:'projector'});
+  assert.equal(args[args.indexOf('--ss')+1],'2');assert.ok(!args.includes('--set'));
+});
+
 test('the output root is checked again after preparing, before any output is written', async () => {
   let checks = 0;
   const { store, worker, out } = rig({ checkOut: () => ++checks === 1 ? { ok: true } : { ok: false, reason: 'mount disappeared' } });

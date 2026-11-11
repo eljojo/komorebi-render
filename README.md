@@ -81,6 +81,12 @@ komorebi-render serve                  run the HTTP API and one worker together
 
 ## The job spec
 
+New session-aware jobs use `"session": { "quality": "export", "presentation": "projector" }` and optional top-level `"ss": 2` (1 by default). Quality is a shipped ceiling: looks may request less, never more. Omitted session quality selects export; omitted presentation follows the playlist, then screen/TV. Profile identifiers come from the pinned engine. Both FPS governors stay off, and the exporter freezes authored inputs, resolved definitions and effective endpoints for resume and parallel capture.
+
+`session` accepts only `quality` and `presentation`. Current quality identifiers are compact, balanced, high and export; presentation is screen or projector. Inline playlists accept optional `presentation` with the same identifiers. Device profiles are provisional and do not promise a rendering rate.
+
+Existing `quality` jobs retain their overriding behavior and `quality.ss`. A job cannot combine `quality` with `session`. Top-level `ss` requires a session. Presentation changes the picture and is recorded separately from the legacy quality-only override claim.
+
 ```json
 { "preset": "3@2", "size": "4k", "seconds": 300, "fps": 60, "master": false,
   "quality": "max", "delivery": { "vt_bitrate": "80M" } }

@@ -13,6 +13,10 @@ controls remain Mac-only; a Linux host refuses them with 422 at submit.
 
 ## Job spec
 
+Session-aware jobs use `session` instead of `quality`: `{ "session": { "quality": "export", "presentation": "projector" }, "ss": 2 }`.
+`session.quality` is compact, balanced, high or export (default export); it caps six fidelity requests using the pinned engine. `session.presentation` is screen or projector; omitted follows playlist presentation then screen/TV. Both governors are forced off. Unknown identifiers are refused against the pin's generated profile list.
+`ss` is capture supersampling, 1 or 2 (default 1), and requires `session`. Legacy jobs keep `quality.ss` and existing unconditional quality overrides. `session` and `quality` cannot be combined. Inline `playlist` objects may include `presentation`, independently of their authored timing. Session resolution and effective endpoint values are frozen in the exporter's run key and manifest; session presentation is not labelled a quality-only override.
+
 POST the spec itself, without a wrapper. Exactly one of `preset`, `look` or `playlist` and `size` are required; `seconds` is required only for video.
 Unknown top-level fields are refused. Defaults apply to omitted optional fields.
 

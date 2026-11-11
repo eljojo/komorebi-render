@@ -1,5 +1,5 @@
 // A job's spec: validated once, at the door, into the canonical shape everything downstream reads.
-import { checkQuality } from './quality.js';
+import { checkQuality, SESSION_PROFILES } from './quality.js';
 
 export const DEFAULT_MAX_SECONDS = 6 * 3600;   // KOMOREBI_RENDER_MAX_SECONDS overrides: the config passes it in
 // `fields[i]` is the field `errors[i]` is about (null for the whole spec): the API answers 422 with it.
@@ -7,7 +7,7 @@ export class SpecError extends Error {
   constructor(errors) { super(errors.join('; ')); this.name = 'SpecError'; this.errors = errors; this.fields = errors.map(fieldOf); }
 }
 
-export const SPEC_KEYS = ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'pipeline', 'jobs', 'block_segments', 'format'];
+export const SPEC_KEYS = ['preset', 'look', 'playlist', 'size', 'seconds', 'fps', 'master', 'delivery', 'quality', 'session', 'ss', 'pipeline', 'jobs', 'block_segments', 'format'];
 export const PIPELINES = ['master', 'gpu', 'gpu-main10', 'browser'];
 export const DELIVERY_KEYS = ['vt_bitrate', 'vt_quality'];
 export const MAX_JOBS = 8, MAX_BLOCK_SEGMENTS = 64;   // the exporter's own --jobs and --block-segments ranges
@@ -18,12 +18,12 @@ function fieldOf(message) {
   const unknown = /^unknown key "(.*)"$/.exec(message);
   if (unknown) return unknown[1];
   if (message.startsWith('exactly one of preset, look or playlist')) return 'preset';
-  const m = /^((?:look|delivery|quality)\.\w+|\w+)/.exec(message);
+  const m = /^((?:look|delivery|quality|session)\.\w+|\w+)/.exec(message);
   return m && (KEYS.includes(m[1].split('.')[0])) ? m[1] : null;
 }
 const PRESET = /^([1-9]\d*)(?:@([1-9]\d*))?(?::(\S+))?$/;   // the exporter's own --arboretum grammar
 const PLAYLIST = /^([1-9]\d*)(?::(\S+))?$/;   // and its --arboretum-playlist: a playlist has no versions
-const PLAYLIST_FIELDS = ['name', 'items'], ITEM_FIELDS = ['name', 'params', 'dwell_s', 'crossfade_s'];
+const PLAYLIST_FIELDS = ['name', 'items', 'presentation'], ITEM_FIELDS = ['name', 'params', 'dwell_s', 'crossfade_s'];
 const MAX_PLAYLIST_ITEMS = 500;   // arboretum's own limit
 const BITRATE = /^[1-9]\d*(\.\d+)?[kKM]$/;   // ffmpeg reads a lowercase m as milli
 const SIZES = { '1080p': '1920x1080', '4k': '3840x2160' };
@@ -33,6 +33,10 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 // defaults are arboretum's: 30 s and 5 s). Returns the normalised object, or null with the errors pushed.
 function checkInlinePlaylist(p, errors) {
   const before = errors.length, out = {};
+  if(p.presentation!=null){
+    if(SESSION_PROFILES.presentation.includes(p.presentation))out.presentation=p.presentation;
+    else errors.push('playlist.presentation must be supported by the pinned engine');
+  }
   for (const k of Object.keys(p)) if (!PLAYLIST_FIELDS.includes(k)) errors.push(`playlist.${k} is not a playlist field; allowed: ${PLAYLIST_FIELDS.join(', ')}`);
   if (p.name !== undefined) {
     if (typeof p.name === 'string' && p.name.length >= 1 && p.name.length <= 80) out.name = p.name;
@@ -159,9 +163,25 @@ export function validateSpec(raw, { maxSeconds = DEFAULT_MAX_SECONDS, platform =
     }
   }
 
-  const q = checkQuality(raw.quality);
-  errors.push(...q.errors);
-  if (!q.errors.length) spec.quality = q.value;
+  if(raw.session!==undefined){
+    if(raw.quality!==undefined)errors.push('session and quality cannot be combined');
+    if(!isObject(raw.session))errors.push('session must be an object');
+    else{
+      const s=raw.session,out={};
+      for(const k of Object.keys(s))if(!['quality','presentation'].includes(k))errors.push(`session.${k} is not a session field`);
+      if(!SESSION_PROFILES.quality.length)errors.push('session is unsupported by the pinned engine');
+      for(const k of ['quality','presentation'])if(s[k]!==undefined){
+        if(SESSION_PROFILES[k].includes(s[k]))out[k]=s[k];else errors.push(`session.${k} must be supported by the pinned engine`);
+      }
+      spec.session=out;
+    }
+    if(raw.ss!==undefined){if([1,2].includes(raw.ss))spec.ss=raw.ss;else errors.push('ss must be 1 or 2');}
+  }else{
+    if(raw.ss!==undefined)errors.push('ss requires session; legacy jobs use quality.ss');
+    const q = checkQuality(raw.quality);
+    errors.push(...q.errors);
+    if (!q.errors.length) spec.quality = q.value;
+  }
 
   if (errors.length) throw new SpecError(errors);
   return spec;

@@ -13,6 +13,7 @@ export const SEGMENT_SECONDS = 10;   // the exporter's --segment-seconds default
 export const LOOK_FILE = 'look-input.json';
 // Likewise a playlist carried in the job: the exporter writes playlist.json itself (what it rendered), so ours is another name.
 export const PLAYLIST_FILE = 'playlist-input.json';
+export const SESSION_FILE = 'session-input.json';
 const TAIL_BYTES = 4096;
 
 export function exporterArgs({ script, commit, folder, spec, platform = process.platform }) {
@@ -21,6 +22,7 @@ export function exporterArgs({ script, commit, folder, spec, platform = process.
   const args = [script, ...(typeof spec.playlist === 'string' ? ['--arboretum-playlist', spec.playlist] : spec.playlist ? ['--playlist-json', join(folder, PLAYLIST_FILE)] : spec.preset ? ['--arboretum', spec.preset] : ['--look-json', join(folder, LOOK_FILE)]),
     '--commit', commit, '--out', folder, '--seconds', String(image ? 1 / 60 : spec.seconds), '--size', spec.size, '--fps', String(image ? 60 : spec.fps)];
   for (const k of QUALITY_KEYS) if (q.set[k] !== undefined) args.push('--set', `${k}=${q.set[k]}`);
+  if(spec.session)args.push('--session-json',join(folder,SESSION_FILE));
   if (q.ss > 1) args.push('--ss', String(q.ss));
   if (platform === 'linux') args.push('--chrome', 'chromium+angle-vulkan+enable-gpu');
   if (image) return [...args, '--delivery', 'none', '--stills', '0'];
